@@ -16,7 +16,7 @@ pub enum BatcherType {
 #[cfg(not(target_os = "macos"))]
 use crate::gpu::GPUBatchHasher;
 
-pub enum Batcher<'a, A>
+pub enum Batcher<A>
 where
     A: Arity<Fr>,
 {
@@ -24,10 +24,10 @@ where
     GPU(GPUBatchHasher<A>),
     #[cfg(target_os = "macos")]
     GPU(NoGPUBatchHasher<A>),
-    CPU(SimplePoseidonBatchHasher<'a, A>),
+    CPU(SimplePoseidonBatchHasher<A>),
 }
 
-impl<A> Batcher<'_, A>
+impl<A> Batcher<A>
 where
     A: Arity<Fr>,
 {
@@ -70,7 +70,7 @@ where
     }
 }
 
-impl<A> BatchHasher<A> for Batcher<'_, A>
+impl<A> BatchHasher<A> for Batcher<A>
 where
     A: Arity<Fr>,
 {
