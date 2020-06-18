@@ -159,6 +159,16 @@ fn get_context(bus_id: u32) -> ClResult<FutharkContext> {
     }
 }
 
+pub fn get_all_nvidia_bus_ids() -> ClResult<Vec<u32>> {
+    let mut bus_ids = Vec::new();
+    for dev in all_devices()? {
+        if let Ok(bus_id) = get_bus_id(dev) {
+            bus_ids.push(bus_id);
+        }
+    }
+    Ok(bus_ids)
+}
+
 pub fn futhark_context(selector: GPUSelector) -> Arc<Mutex<FutharkContext>> {
     let mut map = FUTHARK_CONTEXT_MAP.lock().unwrap();
     let bus_id = selector.get_bus_id().unwrap();

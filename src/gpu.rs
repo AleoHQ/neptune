@@ -803,4 +803,43 @@ mod tests {
         assert_eq!(expected_hashes, hashes);
         assert_eq!(expected_hashes, gpu_hashes);
     }
+
+    fn test_mbatch_hash8s_on_device(dev: Arc<Mutex<FutharkContext>>) {
+        let mut rng = XorShiftRng::from_seed(crate::TEST_SEED);
+        let mut ctx = FutharkContext::new();
+        let mut state = if let BatcherState::Arity8s(s) =
+            init_hash8(&mut ctx, Strength::Strengthened).unwrap()
+        {
+            s
+        } else {
+            panic!("expected Arity8s");
+        };
+        let batch_size = 100;
+
+        let mut gpu_hasher =
+            GPUBatchHasher::<U8>::new_with_strength(dev, Strength::Strengthened, batch_size)
+                .unwrap();
+        let mut simple_hasher =
+            SimplePoseidonBatchHasher::<U8>::new_with_strength(Strength::Strengthened, batch_size)
+                .unwrap();
+
+        let preimages = (0..batch_size)
+            .map(|_| GenericArray::<Fr, U8>::generate(|_| Fr::random(&mut rng)))
+            .collect::<Vec<_>>();
+
+        let (hashes, _) = mbatch_hash8s(&mut ctx, &mut state, preimages.as_slice()).unwrap();
+        let gpu_hashes = gpu_hasher.hash(&preimages).unwrap();
+        let expected_hashes: Vec<_> = simple_hasher.hash(&preimages).unwrap();
+
+        assert_eq!(expected_hashes, hashes);
+        assert_eq!(expected_hashes, gpu_hashes);
+    }
+
+    #[test]
+    fn test_custom_gpus() {
+        let bus_ids = cl::get_all_nvidia_bus_ids().unwrap();
+        for bus_id in bus_ids {
+            test_mbatch_hash8s_on_device(cl::futhark_context(cl::GPUSelector::NvidiaBusId(bus_id)));
+        }
+    }
 }
