@@ -9,12 +9,13 @@ const MAX_LEN: usize = 128;
 lazy_static! {
     pub static ref FUTHARK_CONTEXT_MAP: Mutex<HashMap<u32, Arc<Mutex<FutharkContext>>>> =
         Mutex::new(HashMap::new());
+    pub static ref FUTHARK_CONTEXT_DEFAULT: Arc<Mutex<FutharkContext>> =
+        Arc::new(Mutex::new(FutharkContext::new()));
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum GPUSelector {
     BusId(u32),
-    Default,
 }
 
 #[derive(Debug, Clone)]
@@ -139,12 +140,11 @@ impl GPUSelector {
     pub fn get_bus_id(&self) -> ClResult<u32> {
         match self {
             GPUSelector::BusId(bus_id) => Ok(*bus_id),
-            GPUSelector::Default => Ok(get_bus_id(get_first_device()?)?),
         }
     }
 }
 
-pub fn get_context(bus_id: u32) -> ClResult<FutharkContext> {
+fn get_context(bus_id: u32) -> ClResult<FutharkContext> {
     unsafe {
         let device = get_device_by_bus_id(bus_id)?;
         let context = create_context(device)?;
@@ -159,7 +159,7 @@ pub fn get_context(bus_id: u32) -> ClResult<FutharkContext> {
     }
 }
 
-pub fn get_futhark_context(selector: GPUSelector) -> Arc<Mutex<FutharkContext>> {
+pub fn futhark_context(selector: GPUSelector) -> Arc<Mutex<FutharkContext>> {
     let mut map = FUTHARK_CONTEXT_MAP.lock().unwrap();
     let bus_id = selector.get_bus_id().unwrap();
     if !map.contains_key(&bus_id) {
@@ -167,6 +167,10 @@ pub fn get_futhark_context(selector: GPUSelector) -> Arc<Mutex<FutharkContext>> 
         map.insert(bus_id, Arc::new(Mutex::new(context)));
     }
     Arc::clone(&map[&bus_id])
+}
+
+pub fn default_futhark_context() -> Arc<Mutex<FutharkContext>> {
+    Arc::clone(&FUTHARK_CONTEXT_DEFAULT)
 }
 
 fn to_u32(inp: &[u8]) -> u32 {

@@ -105,18 +105,19 @@ where
     A: Arity<Fr>,
 {
     /// Create a new `GPUBatchHasher` and initialize it with state corresponding with its `A`.
-    pub(crate) fn new(selector: cl::GPUSelector, max_batch_size: usize) -> Result<Self, Error> {
-        Self::new_with_strength(selector, DEFAULT_STRENGTH, max_batch_size)
+    pub(crate) fn new(
+        ctx: Arc<Mutex<FutharkContext>>,
+        max_batch_size: usize,
+    ) -> Result<Self, Error> {
+        Self::new_with_strength(ctx, DEFAULT_STRENGTH, max_batch_size)
     }
 
     /// Create a new `GPUBatchHasher` and initialize it with state corresponding with its `A`.
     pub(crate) fn new_with_strength(
-        selector: cl::GPUSelector,
+        ctx: Arc<Mutex<FutharkContext>>,
         strength: Strength,
         max_batch_size: usize,
     ) -> Result<Self, Error> {
-        let ctx = cl::get_futhark_context(selector);
-
         Ok(Self {
             ctx: Arc::clone(&ctx),
             state: BatcherState::new_with_strength::<A>(Arc::clone(&ctx), strength)?,
@@ -609,7 +610,7 @@ mod tests {
         let batch_size = 100;
 
         let mut gpu_hasher = GPUBatchHasher::<U2>::new_with_strength(
-            cl::GPUSelector::Default,
+            cl::default_futhark_context(),
             Strength::Standard,
             batch_size,
         )
@@ -644,7 +645,7 @@ mod tests {
         let batch_size = 100;
 
         let mut gpu_hasher = GPUBatchHasher::<U2>::new_with_strength(
-            cl::GPUSelector::Default,
+            cl::default_futhark_context(),
             Strength::Strengthened,
             batch_size,
         )
@@ -678,7 +679,7 @@ mod tests {
         let batch_size = 100;
 
         let mut gpu_hasher = GPUBatchHasher::<U8>::new_with_strength(
-            cl::GPUSelector::Default,
+            cl::default_futhark_context(),
             Strength::Standard,
             batch_size,
         )
@@ -713,7 +714,7 @@ mod tests {
         let batch_size = 100;
 
         let mut gpu_hasher = GPUBatchHasher::<U8>::new_with_strength(
-            cl::GPUSelector::Default,
+            cl::default_futhark_context(),
             Strength::Strengthened,
             batch_size,
         )
@@ -747,7 +748,7 @@ mod tests {
         let batch_size = 100;
 
         let mut gpu_hasher = GPUBatchHasher::<U11>::new_with_strength(
-            cl::GPUSelector::Default,
+            cl::default_futhark_context(),
             Strength::Standard,
             batch_size,
         )
@@ -782,7 +783,7 @@ mod tests {
         let batch_size = 100;
 
         let mut gpu_hasher = GPUBatchHasher::<U11>::new_with_strength(
-            cl::GPUSelector::Default,
+            cl::default_futhark_context(),
             Strength::Strengthened,
             batch_size,
         )
