@@ -1,8 +1,15 @@
+use std::collections::HashMap;
 use std::ptr;
+use std::sync::{Arc, Mutex};
 use triton::bindings;
 use triton::FutharkContext;
 
 const MAX_LEN: usize = 128;
+
+lazy_static! {
+    pub static ref FUTHARK_CONTEXT_MAP: Mutex<HashMap<u32, Arc<Mutex<FutharkContext>>>> =
+        Mutex::new(HashMap::new());
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum GPUSelector {
@@ -150,6 +157,16 @@ pub fn get_context(bus_id: u32) -> ClResult<FutharkContext> {
             config: ctx_config,
         })
     }
+}
+
+pub fn get_futhark_context(selector: GPUSelector) -> Arc<Mutex<FutharkContext>> {
+    let mut map = FUTHARK_CONTEXT_MAP.lock().unwrap();
+    let bus_id = selector.get_bus_id().unwrap();
+    if !map.contains_key(&bus_id) {
+        let context = get_context(bus_id).unwrap();
+        map.insert(bus_id, Arc::new(Mutex::new(context)));
+    }
+    Arc::clone(&map[&bus_id])
 }
 
 fn to_u32(inp: &[u8]) -> u32 {

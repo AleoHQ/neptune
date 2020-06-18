@@ -23,11 +23,6 @@ type S11State = triton::FutharkOpaqueS11State;
 
 pub(crate) type T864MState = triton::FutharkOpaqueT864MState;
 
-lazy_static! {
-    pub static ref FUTHARK_CONTEXT_MAP: Mutex<HashMap<u32, Arc<Mutex<FutharkContext>>>> =
-        Mutex::new(HashMap::new());
-}
-
 /// Container to hold the state corresponding to each supported arity.
 enum BatcherState {
     Arity2(P2State),
@@ -120,15 +115,7 @@ where
         strength: Strength,
         max_batch_size: usize,
     ) -> Result<Self, Error> {
-        let ctx = {
-            let mut map = FUTHARK_CONTEXT_MAP.lock().unwrap();
-            let bus_id = selector.get_bus_id().unwrap();
-            if !map.contains_key(&bus_id) {
-                let context = cl::get_context(bus_id).unwrap();
-                map.insert(bus_id, Arc::new(Mutex::new(context)));
-            }
-            Arc::clone(&map[&bus_id])
-        };
+        let ctx = cl::get_futhark_context(selector);
 
         Ok(Self {
             ctx: Arc::clone(&ctx),
