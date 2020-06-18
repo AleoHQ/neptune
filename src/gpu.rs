@@ -610,7 +610,7 @@ mod tests {
         let batch_size = 100;
 
         let mut gpu_hasher = GPUBatchHasher::<U2>::new_with_strength(
-            cl::default_futhark_context(),
+            cl::default_futhark_context().unwrap(),
             Strength::Standard,
             batch_size,
         )
@@ -645,7 +645,7 @@ mod tests {
         let batch_size = 100;
 
         let mut gpu_hasher = GPUBatchHasher::<U2>::new_with_strength(
-            cl::default_futhark_context(),
+            cl::default_futhark_context().unwrap(),
             Strength::Strengthened,
             batch_size,
         )
@@ -679,7 +679,7 @@ mod tests {
         let batch_size = 100;
 
         let mut gpu_hasher = GPUBatchHasher::<U8>::new_with_strength(
-            cl::default_futhark_context(),
+            cl::default_futhark_context().unwrap(),
             Strength::Standard,
             batch_size,
         )
@@ -714,7 +714,7 @@ mod tests {
         let batch_size = 100;
 
         let mut gpu_hasher = GPUBatchHasher::<U8>::new_with_strength(
-            cl::default_futhark_context(),
+            cl::default_futhark_context().unwrap(),
             Strength::Strengthened,
             batch_size,
         )
@@ -748,7 +748,7 @@ mod tests {
         let batch_size = 100;
 
         let mut gpu_hasher = GPUBatchHasher::<U11>::new_with_strength(
-            cl::default_futhark_context(),
+            cl::default_futhark_context().unwrap(),
             Strength::Standard,
             batch_size,
         )
@@ -783,7 +783,7 @@ mod tests {
         let batch_size = 100;
 
         let mut gpu_hasher = GPUBatchHasher::<U11>::new_with_strength(
-            cl::default_futhark_context(),
+            cl::default_futhark_context().unwrap(),
             Strength::Strengthened,
             batch_size,
         )
@@ -839,7 +839,9 @@ mod tests {
     fn test_custom_gpus() {
         let bus_ids = cl::get_all_nvidia_bus_ids().unwrap();
         for bus_id in bus_ids {
-            test_mbatch_hash8s_on_device(cl::futhark_context(cl::GPUSelector::NvidiaBusId(bus_id)));
+            test_mbatch_hash8s_on_device(
+                cl::futhark_context(cl::GPUSelector::NvidiaBusId(bus_id)).unwrap(),
+            );
         }
     }
 }

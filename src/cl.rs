@@ -201,19 +201,19 @@ pub fn get_all_nvidia_bus_ids() -> ClResult<Vec<u32>> {
     Ok(bus_ids)
 }
 
-pub fn futhark_context(selector: GPUSelector) -> Arc<Mutex<FutharkContext>> {
+pub fn futhark_context(selector: GPUSelector) -> ClResult<Arc<Mutex<FutharkContext>>> {
     let mut map = FUTHARK_CONTEXT_MAP.lock().unwrap();
-    let bus_id = selector.get_bus_id().unwrap();
+    let bus_id = selector.get_bus_id()?;
     if !map.contains_key(&bus_id) {
-        let device = get_device_by_nvidia_bus_id(bus_id).unwrap();
-        let context = create_futhark_context(device).unwrap();
+        let device = get_device_by_nvidia_bus_id(bus_id)?;
+        let context = create_futhark_context(device)?;
         map.insert(bus_id, Arc::new(Mutex::new(context)));
     }
-    Arc::clone(&map[&bus_id])
+    Ok(Arc::clone(&map[&bus_id]))
 }
 
-pub fn default_futhark_context() -> Arc<Mutex<FutharkContext>> {
-    Arc::clone(&FUTHARK_CONTEXT_DEFAULT)
+pub fn default_futhark_context() -> ClResult<Arc<Mutex<FutharkContext>>> {
+    Ok(Arc::clone(&FUTHARK_CONTEXT_DEFAULT))
 }
 
 fn to_u32(inp: &[u8]) -> u32 {

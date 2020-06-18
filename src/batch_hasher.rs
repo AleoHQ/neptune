@@ -54,14 +54,14 @@ where
             BatcherType::CustomGPU(_) => panic!("GPU unimplemented on macos"),
             #[cfg(all(feature = "gpu", not(target_os = "macos")))]
             BatcherType::GPU => Ok(Batcher::GPU(GPUBatchHasher::<A>::new_with_strength(
-                cl::default_futhark_context(),
+                cl::default_futhark_context().unwrap(), // TODO: Remove unwrap
                 strength,
                 max_batch_size,
             )?)),
             #[cfg(all(feature = "gpu", not(target_os = "macos")))]
             BatcherType::CustomGPU(selector) => {
                 Ok(Batcher::GPU(GPUBatchHasher::<A>::new_with_strength(
-                    cl::futhark_context(*selector),
+                    cl::futhark_context(*selector).unwrap(), // TODO: Remove unwrap
                     strength,
                     max_batch_size,
                 )?))
