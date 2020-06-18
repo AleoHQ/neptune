@@ -23,6 +23,7 @@ pub enum ClError {
     DeviceNotFound,
     PlatformNotFound,
     NvidiaBusIdNotAvailable,
+    PlatformNameNotAvailable,
     CannotCreateContext,
     CannotCreateQueue,
 }
@@ -39,6 +40,34 @@ fn get_platforms() -> ClResult<Vec<bindings::cl_platform_id>> {
     } else {
         Err(ClError::PlatformNotFound)
     }
+}
+
+fn get_platform_name(platform_id: bindings::cl_platform_id) -> ClResult<String> {
+    let mut name = [0u8; MAX_LEN];
+    let mut len = 0u64;
+    let res = unsafe {
+        bindings::clGetPlatformInfo(
+            platform_id,
+            bindings::CL_PLATFORM_NAME as u32,
+            MAX_LEN as u64,
+            name.as_mut_ptr() as *mut std::ffi::c_void,
+            &mut len,
+        )
+    };
+    if res == bindings::CL_SUCCESS as i32 {
+        Ok(String::from_utf8(name[..len as usize - 1].to_vec()).unwrap())
+    } else {
+        Err(ClError::PlatformNameNotAvailable)
+    }
+}
+
+fn get_platform_by_name(name: &str) -> ClResult<bindings::cl_platform_id> {
+    for plat in get_platforms()? {
+        if get_platform_name(plat)? == name {
+            return Ok(plat);
+        }
+    }
+    Err(ClError::PlatformNotFound)
 }
 
 fn get_devices(platform_id: bindings::cl_platform_id) -> ClResult<Vec<bindings::cl_device_id>> {
@@ -159,13 +188,17 @@ fn get_context(bus_id: u32) -> ClResult<FutharkContext> {
     }
 }
 
+pub fn get_all_nvidia_devices() -> ClResult<Vec<bindings::cl_device_id>> {
+    Ok(get_devices(get_platform_by_name("NVIDIA CUDA")?)?)
+}
+
 pub fn get_all_nvidia_bus_ids() -> ClResult<Vec<u32>> {
     let mut bus_ids = Vec::new();
-    for dev in all_devices()? {
-        if let Ok(bus_id) = get_bus_id(dev) {
-            bus_ids.push(bus_id);
-        }
+    for dev in get_all_nvidia_devices()? {
+        bus_ids.push(get_bus_id(dev)?);
     }
+    bus_ids.sort_unstable();
+    bus_ids.dedup();
     Ok(bus_ids)
 }
 
@@ -185,4 +218,17 @@ pub fn default_futhark_context() -> Arc<Mutex<FutharkContext>> {
 
 fn to_u32(inp: &[u8]) -> u32 {
     (inp[0] as u32) + ((inp[1] as u32) << 8) + ((inp[2] as u32) << 16) + ((inp[3] as u32) << 24)
+}
+
+#[cfg(test)]
+#[cfg(all(feature = "gpu", not(target_os = "macos")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bus_id_uniqueness() {
+        let devices = get_all_nvidia_devices().unwrap();
+        let bus_ids = get_all_nvidia_bus_ids().unwrap();
+        assert_eq!(devices.len(), bus_ids.len());
+    }
 }
