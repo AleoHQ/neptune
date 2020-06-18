@@ -15,14 +15,14 @@ lazy_static! {
 
 #[derive(Debug, Clone, Copy)]
 pub enum GPUSelector {
-    BusId(u32),
+    NvidiaBusId(u32),
 }
 
 #[derive(Debug, Clone)]
 pub enum ClError {
     DeviceNotFound,
     PlatformNotFound,
-    BusIdNotAvailable,
+    NvidiaBusIdNotAvailable,
     CannotCreateContext,
     CannotCreateQueue,
 }
@@ -75,7 +75,7 @@ fn get_bus_id(device: bindings::cl_device_id) -> ClResult<u32> {
     if res == bindings::CL_SUCCESS as i32 && len == 4 {
         Ok(to_u32(&ret[..4]))
     } else {
-        Err(ClError::BusIdNotAvailable)
+        Err(ClError::NvidiaBusIdNotAvailable)
     }
 }
 
@@ -139,7 +139,7 @@ fn create_queue(
 impl GPUSelector {
     pub fn get_bus_id(&self) -> ClResult<u32> {
         match self {
-            GPUSelector::BusId(bus_id) => Ok(*bus_id),
+            GPUSelector::NvidiaBusId(bus_id) => Ok(*bus_id),
         }
     }
 }
