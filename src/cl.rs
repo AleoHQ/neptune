@@ -108,8 +108,8 @@ fn get_bus_id(device: bindings::cl_device_id) -> ClResult<u32> {
     }
 }
 
-fn get_device_by_bus_id(bus_id: u32) -> ClResult<bindings::cl_device_id> {
-    for dev in all_devices()? {
+fn get_device_by_nvidia_bus_id(bus_id: u32) -> ClResult<bindings::cl_device_id> {
+    for dev in get_all_nvidia_devices()? {
         if get_bus_id(dev)? == bus_id {
             return Ok(dev);
         }
@@ -173,9 +173,8 @@ impl GPUSelector {
     }
 }
 
-fn get_context(bus_id: u32) -> ClResult<FutharkContext> {
+fn create_futhark_context(device: bindings::cl_device_id) -> ClResult<FutharkContext> {
     unsafe {
-        let device = get_device_by_bus_id(bus_id)?;
         let context = create_context(device)?;
         let queue = create_queue(context, device)?;
 
@@ -206,7 +205,8 @@ pub fn futhark_context(selector: GPUSelector) -> Arc<Mutex<FutharkContext>> {
     let mut map = FUTHARK_CONTEXT_MAP.lock().unwrap();
     let bus_id = selector.get_bus_id().unwrap();
     if !map.contains_key(&bus_id) {
-        let context = get_context(bus_id).unwrap();
+        let device = get_device_by_nvidia_bus_id(bus_id).unwrap();
+        let context = create_futhark_context(device).unwrap();
         map.insert(bus_id, Arc::new(Mutex::new(context)));
     }
     Arc::clone(&map[&bus_id])
