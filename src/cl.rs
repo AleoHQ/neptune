@@ -26,6 +26,7 @@ lazy_static! {
 #[derive(Debug, Clone, Copy)]
 pub enum GPUSelector {
     BusId(u32),
+    Index(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -207,6 +208,7 @@ impl GPUSelector {
     pub fn get_bus_id(&self) -> ClResult<u32> {
         match self {
             GPUSelector::BusId(bus_id) => Ok(*bus_id),
+            GPUSelector::Index(index) => Ok(get_bus_id(get_all_devices()?[*index])?),
         }
     }
 }
