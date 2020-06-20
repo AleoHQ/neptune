@@ -6,6 +6,16 @@ use triton::FutharkContext;
 
 const MAX_LEN: usize = 128;
 
+#[repr(C)]
+#[derive(Debug, Clone, Default)]
+struct cl_amd_device_topology {
+    r#type: u32,
+    unused: [u8; 17],
+    bus: u8,
+    device: u8,
+    function: u8,
+}
+
 lazy_static! {
     pub static ref FUTHARK_CONTEXT_MAP: Mutex<HashMap<u32, Arc<Mutex<FutharkContext>>>> =
         Mutex::new(HashMap::new());
@@ -23,6 +33,7 @@ pub enum ClError {
     DeviceNotFound,
     PlatformNotFound,
     NvidiaBusIdNotAvailable,
+    AmdTopologyNotAvailable,
     PlatformNameNotAvailable,
     CannotCreateContext,
     CannotCreateQueue,
@@ -105,6 +116,26 @@ fn get_bus_id(device: bindings::cl_device_id) -> ClResult<u32> {
         Ok(to_u32(&ret[..4]))
     } else {
         Err(ClError::NvidiaBusIdNotAvailable)
+    }
+}
+
+fn get_amd_topology(device: bindings::cl_device_id) -> ClResult<cl_amd_device_topology> {
+    let mut ret = cl_amd_device_topology::default();
+    let size = std::mem::size_of::<cl_amd_device_topology>() as u64;
+    let mut len = 0u64;
+    let res = unsafe {
+        bindings::clGetDeviceInfo(
+            device,
+            0x4037 as u32,
+            size,
+            &mut ret as *mut cl_amd_device_topology as *mut std::ffi::c_void,
+            &mut len,
+        )
+    };
+    if res == bindings::CL_SUCCESS as i32 && len == size {
+        Ok(ret)
+    } else {
+        Err(ClError::AmdTopologyNotAvailable)
     }
 }
 
