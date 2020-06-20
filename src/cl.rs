@@ -25,13 +25,14 @@ lazy_static! {
 
 #[derive(Debug, Clone, Copy)]
 pub enum GPUSelector {
-    NvidiaBusId(u32),
+    BusId(u32),
 }
 
 #[derive(Debug, Clone)]
 pub enum ClError {
     DeviceNotFound,
     PlatformNotFound,
+    BusIdNotAvailable,
     NvidiaBusIdNotAvailable,
     AmdTopologyNotAvailable,
     PlatformNameNotAvailable,
@@ -101,6 +102,12 @@ fn get_devices(platform_id: bindings::cl_platform_id) -> ClResult<Vec<bindings::
 }
 
 fn get_bus_id(device: bindings::cl_device_id) -> ClResult<u32> {
+    get_nvidia_bus_id(device)
+        .or_else(|_| Ok(get_amd_topology(device)?.bus as u32))
+        .map_err(|_: ClError| ClError::BusIdNotAvailable)
+}
+
+fn get_nvidia_bus_id(device: bindings::cl_device_id) -> ClResult<u32> {
     let mut ret = [0u8; MAX_LEN];
     let mut len = 0u64;
     let res = unsafe {
@@ -139,8 +146,8 @@ fn get_amd_topology(device: bindings::cl_device_id) -> ClResult<cl_amd_device_to
     }
 }
 
-fn get_device_by_nvidia_bus_id(bus_id: u32) -> ClResult<bindings::cl_device_id> {
-    for dev in get_all_nvidia_devices()? {
+fn get_device_by_bus_id(bus_id: u32) -> ClResult<bindings::cl_device_id> {
+    for dev in get_all_devices()? {
         if get_bus_id(dev)? == bus_id {
             return Ok(dev);
         }
@@ -149,7 +156,7 @@ fn get_device_by_nvidia_bus_id(bus_id: u32) -> ClResult<bindings::cl_device_id> 
     Err(ClError::DeviceNotFound)
 }
 
-fn all_devices() -> ClResult<Vec<bindings::cl_device_id>> {
+fn get_all_devices() -> ClResult<Vec<bindings::cl_device_id>> {
     let mut devs = Vec::new();
     for platform in get_platforms()? {
         for dev in get_devices(platform)? {
@@ -160,7 +167,7 @@ fn all_devices() -> ClResult<Vec<bindings::cl_device_id>> {
 }
 
 fn get_first_device() -> ClResult<bindings::cl_device_id> {
-    let devs = all_devices()?;
+    let devs = get_all_devices()?;
     devs.first().map(|d| *d).ok_or(ClError::DeviceNotFound)
 }
 
@@ -199,7 +206,7 @@ fn create_queue(
 impl GPUSelector {
     pub fn get_bus_id(&self) -> ClResult<u32> {
         match self {
-            GPUSelector::NvidiaBusId(bus_id) => Ok(*bus_id),
+            GPUSelector::BusId(bus_id) => Ok(*bus_id),
         }
     }
 }
@@ -222,9 +229,9 @@ pub fn get_all_nvidia_devices() -> ClResult<Vec<bindings::cl_device_id>> {
     Ok(get_devices(get_platform_by_name("NVIDIA CUDA")?)?)
 }
 
-pub fn get_all_nvidia_bus_ids() -> ClResult<Vec<u32>> {
+pub fn get_all_bus_ids() -> ClResult<Vec<u32>> {
     let mut bus_ids = Vec::new();
-    for dev in get_all_nvidia_devices()? {
+    for dev in get_all_devices()? {
         bus_ids.push(get_bus_id(dev)?);
     }
     bus_ids.sort_unstable();
@@ -236,7 +243,7 @@ pub fn futhark_context(selector: GPUSelector) -> ClResult<Arc<Mutex<FutharkConte
     let mut map = FUTHARK_CONTEXT_MAP.lock().unwrap();
     let bus_id = selector.get_bus_id()?;
     if !map.contains_key(&bus_id) {
-        let device = get_device_by_nvidia_bus_id(bus_id)?;
+        let device = get_device_by_bus_id(bus_id)?;
         let context = create_futhark_context(device)?;
         map.insert(bus_id, Arc::new(Mutex::new(context)));
     }
@@ -258,8 +265,8 @@ mod tests {
 
     #[test]
     fn test_bus_id_uniqueness() {
-        let devices = get_all_nvidia_devices().unwrap();
-        let bus_ids = get_all_nvidia_bus_ids().unwrap();
+        let devices = get_all_devices().unwrap();
+        let bus_ids = get_all_bus_ids().unwrap();
         assert_eq!(devices.len(), bus_ids.len());
     }
 }

@@ -837,10 +837,10 @@ mod tests {
 
     #[test]
     fn test_custom_gpus() {
-        let bus_ids = cl::get_all_nvidia_bus_ids().unwrap();
+        let bus_ids = cl::get_all_bus_ids().unwrap();
         for bus_id in bus_ids {
             test_mbatch_hash8s_on_device(
-                cl::futhark_context(cl::GPUSelector::NvidiaBusId(bus_id)).unwrap(),
+                cl::futhark_context(cl::GPUSelector::BusId(bus_id)).unwrap(),
             );
         }
     }
