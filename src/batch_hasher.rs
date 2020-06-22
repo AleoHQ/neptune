@@ -2,7 +2,7 @@ use crate::error::Error;
 use crate::poseidon::SimplePoseidonBatchHasher;
 use crate::{Arity, BatchHasher, Strength, DEFAULT_STRENGTH};
 use generic_array::GenericArray;
-use paired::bls12_381::Fr;
+use snarkos_curves::bls12_377::Fr;
 use std::marker::PhantomData;
 
 #[derive(Clone, Copy, Debug)]

@@ -1,32 +1,32 @@
-use ff::{Field, ScalarEngine};
+use snarkos_models::curves::{Field, PrimeField};
 
 use crate::matrix;
 use crate::matrix::{
-    apply_matrix, invert, is_identity, is_invertible, is_square, mat_mul, minor, Matrix, Scalar,
+    apply_matrix, invert, is_identity, is_invertible, is_square, mat_mul, minor, Matrix,
 };
 use crate::scalar_from_u64;
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct MDSMatrices<E: ScalarEngine> {
-    pub m: Matrix<Scalar<E>>,
-    pub m_inv: Matrix<Scalar<E>>,
-    pub m_hat: Matrix<Scalar<E>>,
-    pub m_hat_inv: Matrix<Scalar<E>>,
-    pub m_prime: Matrix<Scalar<E>>,
-    pub m_double_prime: Matrix<Scalar<E>>,
+pub struct MDSMatrices<F: PrimeField> {
+    pub m: Matrix<F>,
+    pub m_inv: Matrix<F>,
+    pub m_hat: Matrix<F>,
+    pub m_hat_inv: Matrix<F>,
+    pub m_prime: Matrix<F>,
+    pub m_double_prime: Matrix<F>,
 }
 
-pub fn create_mds_matrices<'a, E: ScalarEngine>(t: usize) -> MDSMatrices<E> {
-    let m = generate_mds::<E>(t);
+pub fn create_mds_matrices<'a, F: PrimeField>(t: usize) -> MDSMatrices<F> {
+    let m = generate_mds::<F>(t);
     derive_mds_matrices(m)
 }
 
-pub fn derive_mds_matrices<'a, E: ScalarEngine>(m: Matrix<Scalar<E>>) -> MDSMatrices<E> {
-    let m_inv = invert::<E>(&m).unwrap(); // m is MDS so invertible.
-    let m_hat = minor::<E>(&m, 0, 0);
-    let m_hat_inv = invert::<E>(&m_hat).unwrap(); // If this returns None, then `mds_matrix` was not correctly generated.
-    let m_prime = make_prime::<E>(&m);
-    let m_double_prime = make_double_prime::<E>(&m, &m_hat_inv);
+pub fn derive_mds_matrices<'a, F: PrimeField>(m: Matrix<F>) -> MDSMatrices<F> {
+    let m_inv = invert::<F>(&m).unwrap(); // m is MDS so invertible.
+    let m_hat = minor::<F>(&m, 0, 0);
+    let m_hat_inv = invert::<F>(&m_hat).unwrap(); // If this returns None, then `mds_matrix` was not correctly generated.
+    let m_prime = make_prime::<F>(&m);
+    let m_double_prime = make_double_prime::<F>(&m, &m_hat_inv);
 
     MDSMatrices {
         m,
@@ -43,15 +43,15 @@ pub fn derive_mds_matrices<'a, E: ScalarEngine>(m: Matrix<Scalar<E>>) -> MDSMatr
 /// (minor to the element in both the row and column) is the identity.
 /// We will pluralize this compact structure `sparse_matrixes` to distinguish from `sparse_matrices` from which they are created.
 #[derive(Debug, Clone, PartialEq)]
-pub struct SparseMatrix<E: ScalarEngine> {
+pub struct SparseMatrix<F: PrimeField> {
     /// `w_hat` is the first column of the M'' matrix. It will be directly multiplied (scalar product) with a row of state elements.
-    pub w_hat: Vec<Scalar<E>>,
+    pub w_hat: Vec<F>,
     /// `v_rest` contains all but the first (already included in `w_hat`).
-    pub v_rest: Vec<Scalar<E>>,
+    pub v_rest: Vec<F>,
 }
 
-impl<E: ScalarEngine> SparseMatrix<E> {
-    pub fn new(m_double_prime: Matrix<Scalar<E>>) -> Self {
+impl<F: PrimeField> SparseMatrix<F> {
+    pub fn new(m_double_prime: Matrix<F>) -> Self {
         assert!(Self::is_sparse_matrix(&m_double_prime));
         let size = matrix::rows(&m_double_prime);
 
@@ -61,16 +61,16 @@ impl<E: ScalarEngine> SparseMatrix<E> {
         Self { w_hat, v_rest }
     }
 
-    pub fn is_sparse_matrix(m: &Matrix<Scalar<E>>) -> bool {
-        is_square(&m) && is_identity::<E>(&minor::<E>(&m, 0, 0))
+    pub fn is_sparse_matrix(m: &Matrix<F>) -> bool {
+        is_square(&m) && is_identity::<F>(&minor::<F>(&m, 0, 0))
     }
 
     pub fn size(&self) -> usize {
         self.w_hat.len()
     }
 
-    pub fn to_matrix(&self) -> Matrix<Scalar<E>> {
-        let mut m = matrix::make_identity::<E>(self.size());
+    pub fn to_matrix(&self) -> Matrix<F> {
+        let mut m = matrix::make_identity::<F>(self.size());
         for (j, elt) in self.w_hat.iter().enumerate() {
             m[j][0] = *elt;
         }
@@ -87,39 +87,39 @@ impl<E: ScalarEngine> SparseMatrix<E> {
 //   - M'' is sparse and replaces M for the round.
 //   - The previous layer's M is then replaced by M x M' = M*.
 //   - M* is likewise factored into M*' and M*'', and the process continues.
-pub fn factor_to_sparse_matrixes<E: ScalarEngine>(
-    base_matrix: Matrix<Scalar<E>>,
+pub fn factor_to_sparse_matrixes<F: PrimeField>(
+    base_matrix: Matrix<F>,
     n: usize,
-) -> (Matrix<Scalar<E>>, Vec<SparseMatrix<E>>) {
-    let (pre_sparse, sparse_matrices) = factor_to_sparse_matrices::<E>(base_matrix, n);
+) -> (Matrix<F>, Vec<SparseMatrix<F>>) {
+    let (pre_sparse, sparse_matrices) = factor_to_sparse_matrices::<F>(base_matrix, n);
     let sparse_matrixes = sparse_matrices
         .iter()
-        .map(|m| SparseMatrix::<E>::new(m.to_vec()))
+        .map(|m| SparseMatrix::<F>::new(m.to_vec()))
         .collect::<Vec<_>>();
 
     (pre_sparse, sparse_matrixes)
 }
 
-pub fn factor_to_sparse_matrices<E: ScalarEngine>(
-    base_matrix: Matrix<Scalar<E>>,
+pub fn factor_to_sparse_matrices<F: PrimeField>(
+    base_matrix: Matrix<F>,
     n: usize,
-) -> (Matrix<Scalar<E>>, Vec<Matrix<Scalar<E>>>) {
+) -> (Matrix<F>, Vec<Matrix<F>>) {
     let (pre_sparse, mut all) =
         (0..n).fold((base_matrix.clone(), Vec::new()), |(curr, mut acc), _| {
-            let derived = derive_mds_matrices::<E>(curr);
+            let derived = derive_mds_matrices::<F>(curr);
             acc.push(derived.m_double_prime);
-            let new = mat_mul::<E>(&base_matrix, &derived.m_prime).unwrap();
+            let new = mat_mul::<F>(&base_matrix, &derived.m_prime).unwrap();
             (new, acc)
         });
     all.reverse();
     (pre_sparse, all)
 }
 
-fn generate_mds<E: ScalarEngine>(t: usize) -> Matrix<Scalar<E>> {
+fn generate_mds<F: PrimeField>(t: usize) -> Matrix<F> {
     // Source: https://github.com/dusk-network/dusk-poseidon-merkle/commit/776c37734ea2e71bb608ce4bc58fdb5f208112a7#diff-2eee9b20fb23edcc0bf84b14167cbfdc
-    let mut matrix: Vec<Vec<E::Fr>> = Vec::with_capacity(t);
-    let mut xs: Vec<E::Fr> = Vec::with_capacity(t);
-    let mut ys: Vec<E::Fr> = Vec::with_capacity(t);
+    let mut matrix: Vec<Vec<F>> = Vec::with_capacity(t);
+    let mut xs: Vec<F> = Vec::with_capacity(t);
+    let mut ys: Vec<F> = Vec::with_capacity(t);
 
     // Generate x and y values deterministically for the cauchy matrix
     // where x[i] != y[i] to allow the values to be inverted
@@ -136,7 +136,7 @@ fn generate_mds<E: ScalarEngine>(t: usize) -> Matrix<Scalar<E>> {
     }
 
     for i in 0..t {
-        let mut row: Vec<E::Fr> = Vec::with_capacity(t);
+        let mut row: Vec<F> = Vec::with_capacity(t);
         for j in 0..t {
             // Generate the entry at (i,j)
             let mut tmp = xs[i];
@@ -148,22 +148,22 @@ fn generate_mds<E: ScalarEngine>(t: usize) -> Matrix<Scalar<E>> {
     }
 
     // To ensure correctness, we would check all sub-matrices for invertibility. Meanwhile, this is a simple sanity check.
-    assert!(is_invertible::<E>(&matrix));
+    assert!(is_invertible::<F>(&matrix));
 
     matrix
 }
 
-fn make_prime<E: ScalarEngine>(m: &Matrix<Scalar<E>>) -> Matrix<Scalar<E>> {
+fn make_prime<F: PrimeField>(m: &Matrix<F>) -> Matrix<F> {
     m.iter()
         .enumerate()
         .map(|(i, row)| match i {
             0 => {
-                let mut new_row = vec![Scalar::<E>::zero(); row.len()];
-                new_row[0] = Scalar::<E>::one();
+                let mut new_row = vec![F::zero(); row.len()];
+                new_row[0] = F::one();
                 new_row
             }
             _ => {
-                let mut new_row = vec![Scalar::<E>::zero(); row.len()];
+                let mut new_row = vec![F::zero(); row.len()];
                 new_row[1..].copy_from_slice(&row[1..]);
                 new_row
             }
@@ -171,12 +171,12 @@ fn make_prime<E: ScalarEngine>(m: &Matrix<Scalar<E>>) -> Matrix<Scalar<E>> {
         .collect()
 }
 
-fn make_double_prime<E: ScalarEngine>(
-    m: &Matrix<Scalar<E>>,
-    m_hat_inv: &Matrix<Scalar<E>>,
-) -> Matrix<Scalar<E>> {
-    let (v, w) = make_v_w::<E>(m);
-    let w_hat = apply_matrix::<E>(m_hat_inv, &w);
+fn make_double_prime<F: PrimeField>(
+    m: &Matrix<F>,
+    m_hat_inv: &Matrix<F>,
+) -> Matrix<F> {
+    let (v, w) = make_v_w::<F>(m);
+    let w_hat = apply_matrix::<F>(m_hat_inv, &w);
 
     m.iter()
         .enumerate()
@@ -188,16 +188,16 @@ fn make_double_prime<E: ScalarEngine>(
                 new_row
             }
             _ => {
-                let mut new_row = vec![Scalar::<E>::zero(); row.len()];
+                let mut new_row = vec![F::zero(); row.len()];
                 new_row[0] = w_hat[i - 1];
-                new_row[i] = Scalar::<E>::one();
+                new_row[i] = F::one();
                 new_row
             }
         })
         .collect()
 }
 
-fn make_v_w<E: ScalarEngine>(m: &Matrix<Scalar<E>>) -> (Vec<Scalar<E>>, Vec<Scalar<E>>) {
+fn make_v_w<F: PrimeField>(m: &Matrix<F>) -> (Vec<F>, Vec<F>) {
     let v = m[0][1..].to_vec();
     let mut w = Vec::new();
     for i in 1..m.len() {

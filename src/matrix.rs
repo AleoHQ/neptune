@@ -1,10 +1,9 @@
-use ff::{Field, ScalarEngine};
+use snarkos_models::curves::{Field, PrimeField};
 
 /// Matrix functions here are, at least for now, quick and dirty — intended only to support precomputation of poseidon optimization.
 
 /// Matrix represented as a Vec of rows, so that m[i][j] represents the jth column of the ith row in Matrix, m.
 pub type Matrix<T> = Vec<Vec<T>>;
-pub type Scalar<E> = <E as ScalarEngine>::Fr;
 
 pub fn rows<T>(matrix: &Matrix<T>) -> usize {
     matrix.len()
@@ -28,11 +27,11 @@ fn columns<T>(matrix: &Matrix<T>) -> usize {
 
 // This wastefully discards the actual inverse, if it exists, so in general callers should
 // just call `invert` if that result will be needed.
-pub(crate) fn is_invertible<E: ScalarEngine>(matrix: &Matrix<Scalar<E>>) -> bool {
-    is_square(matrix) && invert::<E>(matrix).is_some()
+pub(crate) fn is_invertible<F: PrimeField>(matrix: &Matrix<F>) -> bool {
+    is_square(matrix) && invert::<F>(matrix).is_some()
 }
 
-fn scalar_mul<E: ScalarEngine>(scalar: Scalar<E>, matrix: &Matrix<Scalar<E>>) -> Matrix<Scalar<E>> {
+fn scalar_mul<F: PrimeField>(scalar: F, matrix: &Matrix<F>) -> Matrix<F> {
     matrix
         .iter()
         .map(|row| {
@@ -47,7 +46,7 @@ fn scalar_mul<E: ScalarEngine>(scalar: Scalar<E>, matrix: &Matrix<Scalar<E>>) ->
         .collect::<Vec<_>>()
 }
 
-fn scalar_vec_mul<E: ScalarEngine>(scalar: Scalar<E>, vec: &[Scalar<E>]) -> Vec<Scalar<E>> {
+fn scalar_vec_mul<F: PrimeField>(scalar: F, vec: &[F]) -> Vec<F> {
     vec.iter()
         .map(|val| {
             let mut prod = scalar.clone();
@@ -57,21 +56,21 @@ fn scalar_vec_mul<E: ScalarEngine>(scalar: Scalar<E>, vec: &[Scalar<E>]) -> Vec<
         .collect::<Vec<_>>()
 }
 
-pub fn mat_mul<E: ScalarEngine>(
-    a: &Matrix<Scalar<E>>,
-    b: &Matrix<Scalar<E>>,
-) -> Option<Matrix<Scalar<E>>> {
+pub fn mat_mul<F: PrimeField>(
+    a: &Matrix<F>,
+    b: &Matrix<F>,
+) -> Option<Matrix<F>> {
     if rows(a) != columns(b) {
         return None;
     };
 
-    let b_t = transpose::<E>(b);
+    let b_t = transpose::<F>(b);
 
     let mut res = Vec::with_capacity(rows(a));
     for i in 0..rows(a) {
         let mut row = Vec::with_capacity(columns(b));
         for j in 0..columns(b) {
-            row.push(vec_mul::<E>(&a[i], &b_t[j]));
+            row.push(vec_mul::<F>(&a[i], &b_t[j]));
         }
         res.push(row);
     }
@@ -79,10 +78,10 @@ pub fn mat_mul<E: ScalarEngine>(
     Some(res)
 }
 
-fn vec_mul<E: ScalarEngine>(a: &[Scalar<E>], b: &[Scalar<E>]) -> Scalar<E> {
+fn vec_mul<F: PrimeField>(a: &[F], b: &[F]) -> F {
     a.iter()
         .zip(b)
-        .fold(Scalar::<E>::zero(), |mut acc, (v1, v2)| {
+        .fold(F::zero(), |mut acc, (v1, v2)| {
             let mut tmp = v1.clone();
             tmp.mul_assign(&v2);
             acc.add_assign(&tmp);
@@ -90,7 +89,7 @@ fn vec_mul<E: ScalarEngine>(a: &[Scalar<E>], b: &[Scalar<E>]) -> Scalar<E> {
         })
 }
 
-pub fn vec_add<E: ScalarEngine>(a: &[Scalar<E>], b: &[Scalar<E>]) -> Vec<Scalar<E>> {
+pub fn vec_add<F: PrimeField>(a: &[F], b: &[F]) -> Vec<F> {
     a.iter()
         .zip(b.iter())
         .map(|(a, b)| {
@@ -101,7 +100,7 @@ pub fn vec_add<E: ScalarEngine>(a: &[Scalar<E>], b: &[Scalar<E>]) -> Vec<Scalar<
         .collect::<Vec<_>>()
 }
 
-pub fn vec_sub<E: ScalarEngine>(a: &[Scalar<E>], b: &[Scalar<E>]) -> Vec<Scalar<E>> {
+pub fn vec_sub<F: PrimeField>(a: &[F], b: &[F]) -> Vec<F> {
     a.iter()
         .zip(b.iter())
         .map(|(a, b)| {
@@ -113,10 +112,10 @@ pub fn vec_sub<E: ScalarEngine>(a: &[Scalar<E>], b: &[Scalar<E>]) -> Vec<Scalar<
 }
 
 /// Left-multiply a vector by a square matrix of same size: MV where V is considered a column vector.
-pub fn left_apply_matrix<E: ScalarEngine>(
-    m: &Matrix<Scalar<E>>,
-    v: &[Scalar<E>],
-) -> Vec<Scalar<E>> {
+pub fn left_apply_matrix<F: PrimeField>(
+    m: &Matrix<F>,
+    v: &[F],
+) -> Vec<F> {
     assert!(is_square(m), "Only square matrix can be applied to vector.");
     assert_eq!(
         rows(m),
@@ -124,7 +123,7 @@ pub fn left_apply_matrix<E: ScalarEngine>(
         "Matrix can only be applied to vector of same size."
     );
 
-    let mut result: Vec<Scalar<E>> = vec![Scalar::<E>::zero(); v.len()];
+    let mut result: Vec<F> = vec![F::zero(); v.len()];
 
     for (result, row) in result.iter_mut().zip(m.iter()) {
         for (mat_val, vec_val) in row.iter().zip(v) {
@@ -137,7 +136,7 @@ pub fn left_apply_matrix<E: ScalarEngine>(
 }
 
 /// Right-multiply a vector by a square matrix  of same size: VM where V is considered a row vector.
-pub fn apply_matrix<E: ScalarEngine>(m: &Matrix<Scalar<E>>, v: &[Scalar<E>]) -> Vec<Scalar<E>> {
+pub fn apply_matrix<F: PrimeField>(m: &Matrix<F>, v: &[F]) -> Vec<F> {
     assert!(is_square(m), "Only square matrix can be applied to vector.");
     assert_eq!(
         rows(m),
@@ -145,7 +144,7 @@ pub fn apply_matrix<E: ScalarEngine>(m: &Matrix<Scalar<E>>, v: &[Scalar<E>]) -> 
         "Matrix can only be applied to vector of same size."
     );
 
-    let mut result: Vec<Scalar<E>> = vec![Scalar::<E>::zero(); v.len()];
+    let mut result: Vec<F> = vec![F::zero(); v.len()];
     for (j, val) in result.iter_mut().enumerate() {
         for (i, row) in m.iter().enumerate() {
             let mut tmp = row[j];
@@ -157,7 +156,7 @@ pub fn apply_matrix<E: ScalarEngine>(m: &Matrix<Scalar<E>>, v: &[Scalar<E>]) -> 
     result
 }
 
-pub fn transpose<E: ScalarEngine>(matrix: &Matrix<Scalar<E>>) -> Matrix<Scalar<E>> {
+pub fn transpose<F: PrimeField>(matrix: &Matrix<F>) -> Matrix<F> {
     let size = rows(matrix);
     let mut new = Vec::with_capacity(size);
     for j in 0..size {
@@ -170,26 +169,26 @@ pub fn transpose<E: ScalarEngine>(matrix: &Matrix<Scalar<E>>) -> Matrix<Scalar<E
     new
 }
 
-pub fn make_identity<E: ScalarEngine>(size: usize) -> Matrix<Scalar<E>> {
-    let mut result = vec![vec![Scalar::<E>::zero(); size]; size];
+pub fn make_identity<F: PrimeField>(size: usize) -> Matrix<F> {
+    let mut result = vec![vec![F::zero(); size]; size];
     for i in 0..size {
-        result[i][i] = Scalar::<E>::one();
+        result[i][i] = F::one();
     }
     result
 }
 
-pub fn kronecker_delta<E: ScalarEngine>(i: usize, j: usize) -> Scalar<E> {
+pub fn kronecker_delta<F: PrimeField>(i: usize, j: usize) -> F {
     if i == j {
-        Scalar::<E>::one()
+        F::one()
     } else {
-        Scalar::<E>::zero()
+        F::zero()
     }
 }
 
-pub fn is_identity<E: ScalarEngine>(matrix: &Matrix<Scalar<E>>) -> bool {
+pub fn is_identity<F: PrimeField>(matrix: &Matrix<F>) -> bool {
     for i in 0..rows(matrix) {
         for j in 0..columns(matrix) {
-            if matrix[i][j] != kronecker_delta::<E>(i, j) {
+            if matrix[i][j] != kronecker_delta::<F>(i, j) {
                 return false;
             }
         }
@@ -201,12 +200,12 @@ pub fn is_square<T>(matrix: &Matrix<T>) -> bool {
     rows(matrix) == columns(matrix)
 }
 
-pub fn minor<E: ScalarEngine>(matrix: &Matrix<Scalar<E>>, i: usize, j: usize) -> Matrix<Scalar<E>> {
+pub fn minor<F: PrimeField>(matrix: &Matrix<F>, i: usize, j: usize) -> Matrix<F> {
     assert!(is_square(matrix));
     let size = rows(matrix);
     assert!(size > 0);
     let new_size = size - 1;
-    let mut new: Matrix<Scalar<E>> = Vec::with_capacity(new_size);
+    let mut new: Matrix<F> = Vec::with_capacity(new_size);
 
     for ii in 0..size {
         if ii != i {
@@ -227,12 +226,12 @@ pub fn minor<E: ScalarEngine>(matrix: &Matrix<Scalar<E>>, i: usize, j: usize) ->
 // Returns `None` if either:
 //   - no non-zero pivot can be found for `column`
 //   - `column` is not the first
-fn eliminate<E: ScalarEngine>(
-    matrix: &Matrix<Scalar<E>>,
+fn eliminate<F: PrimeField>(
+    matrix: &Matrix<F>,
     column: usize,
-    shadow: &mut Matrix<Scalar<E>>,
-) -> Option<Matrix<Scalar<E>>> {
-    let zero = Scalar::<E>::zero();
+    shadow: &mut Matrix<F>,
+) -> Option<Matrix<F>> {
+    let zero = F::zero();
     let pivot_index = (0..rows(matrix))
         .find(|&i| matrix[i][column] != zero && (0..column).all(|j| matrix[i][j] == zero))?;
 
@@ -255,24 +254,24 @@ fn eliminate<E: ScalarEngine>(
             let mut factor = val.clone();
             factor.mul_assign(&inv_pivot);
 
-            let scaled_pivot = scalar_vec_mul::<E>(factor, &pivot);
-            let eliminated = vec_sub::<E>(row, &scaled_pivot);
+            let scaled_pivot = scalar_vec_mul::<F>(factor, &pivot);
+            let eliminated = vec_sub::<F>(row, &scaled_pivot);
             result.push(eliminated);
 
             let shadow_pivot = &shadow[pivot_index];
-            let scaled_shadow_pivot = scalar_vec_mul::<E>(factor, shadow_pivot);
+            let scaled_shadow_pivot = scalar_vec_mul::<F>(factor, shadow_pivot);
             let shadow_row = &shadow[i];
-            shadow[i] = vec_sub::<E>(shadow_row, &scaled_shadow_pivot);
+            shadow[i] = vec_sub::<F>(shadow_row, &scaled_shadow_pivot);
         }
     }
     Some(result)
 }
 
 // `matrix` must be square.
-fn upper_triangular<E: ScalarEngine>(
-    matrix: &Matrix<Scalar<E>>,
-    mut shadow: &mut Matrix<Scalar<E>>,
-) -> Option<Matrix<Scalar<E>>> {
+fn upper_triangular<F: PrimeField>(
+    matrix: &Matrix<F>,
+    mut shadow: &mut Matrix<F>,
+) -> Option<Matrix<F>> {
     assert!(is_square(matrix));
     let mut result = Vec::with_capacity(matrix.len());
     let mut shadow_result = Vec::with_capacity(matrix.len());
@@ -282,7 +281,7 @@ fn upper_triangular<E: ScalarEngine>(
     while curr.len() > 1 {
         let initial_rows = curr.len();
 
-        curr = eliminate::<E>(&curr, column, &mut shadow)?;
+        curr = eliminate::<F>(&curr, column, &mut shadow)?;
         result.push(curr[0].clone());
         shadow_result.push(shadow[0].clone());
         column += 1;
@@ -300,13 +299,13 @@ fn upper_triangular<E: ScalarEngine>(
 }
 
 // `matrix` must be upper triangular.
-fn reduce_to_identity<E: ScalarEngine>(
-    matrix: &Matrix<Scalar<E>>,
-    shadow: &mut Matrix<Scalar<E>>,
-) -> Option<Matrix<Scalar<E>>> {
+fn reduce_to_identity<F: PrimeField>(
+    matrix: &Matrix<F>,
+    shadow: &mut Matrix<F>,
+) -> Option<Matrix<F>> {
     let size = rows(matrix);
-    let mut result: Matrix<Scalar<E>> = Vec::new();
-    let mut shadow_result: Matrix<Scalar<E>> = Vec::new();
+    let mut result: Matrix<F> = Vec::new();
+    let mut shadow_result: Matrix<F> = Vec::new();
 
     for i in 0..size {
         let idx = size - i - 1;
@@ -316,17 +315,17 @@ fn reduce_to_identity<E: ScalarEngine>(
         let val = row[idx];
         let inv = val.inverse()?; // If `val` is zero, then there is no inverse, and we cannot compute a result.
 
-        let mut normalized = scalar_vec_mul::<E>(inv, &row);
-        let mut shadow_normalized = scalar_vec_mul::<E>(inv, &shadow_row);
+        let mut normalized = scalar_vec_mul::<F>(inv, &row);
+        let mut shadow_normalized = scalar_vec_mul::<F>(inv, &shadow_row);
 
         for j in 0..i {
             let idx = size - j - 1;
             let val = normalized[idx];
-            let subtracted = scalar_vec_mul::<E>(val, &result[j]);
-            let result_subtracted = scalar_vec_mul::<E>(val, &shadow_result[j]);
+            let subtracted = scalar_vec_mul::<F>(val, &result[j]);
+            let result_subtracted = scalar_vec_mul::<F>(val, &shadow_result[j]);
 
-            normalized = vec_sub::<E>(&normalized, &subtracted);
-            shadow_normalized = vec_sub::<E>(&shadow_normalized, &result_subtracted);
+            normalized = vec_sub::<F>(&normalized, &subtracted);
+            shadow_normalized = vec_sub::<F>(&shadow_normalized, &result_subtracted);
         }
 
         result.push(normalized);
@@ -341,11 +340,11 @@ fn reduce_to_identity<E: ScalarEngine>(
 }
 
 //
-pub(crate) fn invert<E: ScalarEngine>(matrix: &Matrix<Scalar<E>>) -> Option<Matrix<Scalar<E>>> {
-    let mut shadow = make_identity::<E>(columns(matrix));
-    let ut = upper_triangular::<E>(&matrix, &mut shadow);
+pub(crate) fn invert<F: PrimeField>(matrix: &Matrix<F>) -> Option<Matrix<F>> {
+    let mut shadow = make_identity::<F>(columns(matrix));
+    let ut = upper_triangular::<F>(&matrix, &mut shadow);
 
-    ut.and_then(|x| reduce_to_identity::<E>(&x, &mut shadow))
+    ut.and_then(|x| reduce_to_identity::<F>(&x, &mut shadow))
         .and(Some(shadow))
 }
 

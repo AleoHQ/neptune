@@ -1,18 +1,18 @@
 use crate::matrix::{apply_matrix, vec_add};
 use crate::mds::MDSMatrices;
 use crate::quintic_s_box;
-use ff::{Field, ScalarEngine};
+use snarkos_models::curves::{Field, PrimeField};
 
 // - Compress constants by pushing them back through linear layers and through the identity components of partial layers.
 // - As a result, constants need only be added after each S-box.
-pub(crate) fn compress_round_constants<E: ScalarEngine>(
+pub(crate) fn compress_round_constants<F: PrimeField>(
     width: usize,
     full_rounds: usize,
     partial_rounds: usize,
-    round_constants: &Vec<E::Fr>,
-    mds_matrices: &MDSMatrices<E>,
+    round_constants: &Vec<F>,
+    mds_matrices: &MDSMatrices<F>,
     partial_preprocessed: usize,
-) -> Vec<E::Fr> {
+) -> Vec<F> {
     let mds_matrix = &mds_matrices.m;
     let inverse_matrix = &mds_matrices.m_inv;
 
@@ -36,7 +36,7 @@ pub(crate) fn compress_round_constants<E: ScalarEngine>(
     };
     for i in 0..end {
         let next_round = round_keys(i + 1); // First round was added before any S-boxes.
-        let inverted = apply_matrix::<E>(inverse_matrix, next_round);
+        let inverted = apply_matrix::<F>(inverse_matrix, next_round);
         res.extend(inverted);
     }
 
@@ -51,7 +51,7 @@ pub(crate) fn compress_round_constants<E: ScalarEngine>(
     //   - (Last produced should be first applied, so either pop until empty, or reverse and extend, etc.
 
     // `partial_keys` will accumulate the single post-S-box constant for each partial-round, in reverse order.
-    let mut partial_keys: Vec<E::Fr> = Vec::new();
+    let mut partial_keys: Vec<F> = Vec::new();
 
     let final_round = half_full_rounds + partial_rounds;
     let final_round_key = round_keys(final_round).to_vec();
@@ -60,12 +60,12 @@ pub(crate) fn compress_round_constants<E: ScalarEngine>(
     let round_acc = (0..partial_preprocessed)
         .map(|i| round_keys(final_round - i - 1))
         .fold(final_round_key, |acc, previous_round_keys| {
-            let mut inverted = apply_matrix::<E>(inverse_matrix, &acc);
+            let mut inverted = apply_matrix::<F>(inverse_matrix, &acc);
 
             partial_keys.push(inverted[0]);
-            inverted[0] = E::Fr::zero();
+            inverted[0] = F::zero();
 
-            vec_add::<E>(&previous_round_keys, &inverted)
+            vec_add::<F>(&previous_round_keys, &inverted)
         });
 
     // Everything in here is dev-driven testing.
@@ -85,16 +85,16 @@ pub(crate) fn compress_round_constants<E: ScalarEngine>(
         let initial_round_keys = round_keys(terminal_constants_round - 1);
 
         // M^-1(T)
-        let mut inv = apply_matrix::<E>(inverse_matrix, terminal_round_keys);
+        let mut inv = apply_matrix::<F>(inverse_matrix, terminal_round_keys);
 
         // M^-1(T)[0]
         let pk = inv[0];
 
         // M^-1(T) - pk (kinda)
-        inv[0] = E::Fr::zero();
+        inv[0] = F::zero();
 
         // (M^-1(T) - pk) - I
-        let result_key = vec_add::<E>(&initial_round_keys, &inv);
+        let result_key = vec_add::<F>(&initial_round_keys, &inv);
 
         assert_eq!(&result_key, &round_acc, "Acc assumption failed.");
         assert_eq!(pk, partial_keys[0], "Partial-key assumption failed.");
@@ -107,30 +107,30 @@ pub(crate) fn compress_round_constants<E: ScalarEngine>(
         ////////////////////////////////////////////////////////////////////////////////
         // Shared between branches, arbitrary initial state representing the output of a previous round's S-Box layer.
         // X
-        let initial_state = vec![E::Fr::one(); width];
+        let initial_state = vec![F::one(); width];
 
         ////////////////////////////////////////////////////////////////////////////////
         // Compute one step with the given (unpreprocessed) constants.
 
         // ARK
         // I + X
-        let mut q_state = vec_add::<E>(initial_round_keys, &initial_state);
+        let mut q_state = vec_add::<F>(initial_round_keys, &initial_state);
 
         // S-Box (partial layer)
         // S((I + X)[0]) = S(I[0] + X[0])
-        quintic_s_box::<E>(&mut q_state[0], None, None);
+        quintic_s_box::<F>(&mut q_state[0], None, None);
 
         // Mix with mds_matrix
-        let mixed = apply_matrix::<E>(mds_matrix, &q_state);
+        let mixed = apply_matrix::<F>(mds_matrix, &q_state);
 
         // Ark
-        let plain_result = vec_add::<E>(terminal_round_keys, &mixed);
+        let plain_result = vec_add::<F>(terminal_round_keys, &mixed);
 
         ////////////////////////////////////////////////////////////////////////////////
         // Compute the same step using the preprocessed constants.
         // M'(initial_state) + (inverted_id - initial_state) = inverted_id
-        //let initial_state1 = apply_matrix::<E>(&m_prime, &initial_state);
-        let mut p_state = vec_add::<E>(&result_key, &initial_state);
+        //let initial_state1 = apply_matrix::<F>(&m_prime, &initial_state);
+        let mut p_state = vec_add::<F>(&result_key, &initial_state);
 
         // In order for the S-box result to be correct, it must have the same input as in the plain path.
         // That means its input (the first component of the state) must have been constructed by
@@ -141,9 +141,9 @@ pub(crate) fn compress_round_constants<E: ScalarEngine>(
             "S-box inputs did not match."
         );
 
-        quintic_s_box::<E>(&mut p_state[0], None, Some(&pk));
+        quintic_s_box::<F>(&mut p_state[0], None, Some(&pk));
 
-        let preprocessed_result = apply_matrix::<E>(&mds_matrix, &p_state);
+        let preprocessed_result = apply_matrix::<F>(&mds_matrix, &p_state);
 
         assert_eq!(
             plain_result, preprocessed_result,
@@ -154,7 +154,7 @@ pub(crate) fn compress_round_constants<E: ScalarEngine>(
     for i in 1..unpreprocessed {
         res.extend(round_keys(half_full_rounds + i));
     }
-    res.extend(apply_matrix::<E>(inverse_matrix, &round_acc));
+    res.extend(apply_matrix::<F>(inverse_matrix, &round_acc));
 
     while let Some(x) = partial_keys.pop() {
         res.push(x)
@@ -164,7 +164,7 @@ pub(crate) fn compress_round_constants<E: ScalarEngine>(
     for i in 1..(half_full_rounds) {
         let start = half_full_rounds + partial_rounds;
         let next_round = round_keys(i + start);
-        let inverted = apply_matrix::<E>(inverse_matrix, next_round);
+        let inverted = apply_matrix::<F>(inverse_matrix, next_round);
         res.extend(inverted);
     }
 

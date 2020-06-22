@@ -2,127 +2,41 @@ use crate::matrix::Matrix;
 use crate::mds::SparseMatrix;
 use crate::poseidon::{Arity, PoseidonConstants};
 
-use bellperson::gadgets::boolean::Boolean;
-use bellperson::gadgets::num;
-use bellperson::gadgets::num::AllocatedNum;
-use bellperson::{ConstraintSystem, LinearCombination, SynthesisError};
-use ff::Field;
-use ff::ScalarEngine as Engine;
+use snarkos_models::{
+    curves::{Field, PrimeField},
+    gadgets::{
+        curves::{FieldGadget, FpGadget},
+        utilities::{alloc::AllocGadget, boolean::Boolean},
+        r1cs::{ConstraintSystem, LinearCombination},
+    }
+};
+use snarkos_errors::gadgets::SynthesisError;
+use snarkos_curves::templates::Bls12;
 use std::marker::PhantomData;
 
-/// Similar to `num::Num`, we use `Elt` to accumulate both values and linear combinations, then eventually
-/// extract into a `num::AllocatedNum`, enforcing that the linear combination corresponds to the result.
-/// In this way, all intermediate calculations are accounted for, with the restriction that we can only
-/// accumulate linear (not polynomial) constraints. The set of operations provided here ensure this invariant is maintained.
-#[derive(Clone)]
-enum Elt<E: Engine> {
-    Allocated(AllocatedNum<E>),
-    Num(num::Num<E>),
-}
-
-impl<E: Engine> Elt<E> {
-    fn is_allocated(&self) -> bool {
-        if let Self::Allocated(_) = self {
-            true
-        } else {
-            false
-        }
-    }
-
-    fn is_num(&self) -> bool {
-        if let Self::Num(_) = self {
-            true
-        } else {
-            false
-        }
-    }
-
-    fn num_from_fr<CS: ConstraintSystem<E>>(fr: E::Fr) -> Self {
-        let num = num::Num::<E>::zero();
-        Self::Num(num.add_bool_with_coeff(CS::one(), &Boolean::Constant(true), fr))
-    }
-
-    fn ensure_allocated<CS: ConstraintSystem<E>>(
-        &self,
-        cs: &mut CS,
-        enforce: bool,
-    ) -> Result<AllocatedNum<E>, SynthesisError> {
-        match self {
-            Self::Allocated(v) => Ok(v.clone()),
-            Self::Num(num) => {
-                let v = AllocatedNum::alloc(cs.namespace(|| "allocate for Elt::Num"), || {
-                    num.get_value()
-                        .ok_or_else(|| SynthesisError::AssignmentMissing)
-                })?;
-
-                if enforce {
-                    cs.enforce(
-                        || format!("enforce num allocation preserves lc"),
-                        |_| num.lc(E::Fr::one()),
-                        |lc| lc + CS::one(),
-                        |lc| lc + v.get_variable(),
-                    );
-                }
-                Ok(v)
-            }
-        }
-    }
-
-    fn val(&self) -> Option<E::Fr> {
-        match self {
-            Self::Allocated(v) => v.get_value(),
-            Self::Num(num) => num.get_value(),
-        }
-    }
-
-    fn lc(&self) -> LinearCombination<E> {
-        match self {
-            Self::Num(num) => num.lc(E::Fr::one()),
-            Self::Allocated(v) => LinearCombination::<E>::zero() + v.get_variable(),
-        }
-    }
-
-    /// Add two Nums and return a Num tracking the calculation. It is forbidden to invoke on an Allocated because the intended computation
-    /// does not include that path.
-    fn add<CS: ConstraintSystem<E>>(self, other: Elt<E>) -> Result<Elt<E>, SynthesisError> {
-        match (self, other) {
-            (Elt::Num(a), Elt::Num(b)) => Ok(Elt::Num(a.add(&b))),
-            _ => panic!("only two numbers may be added"),
-        }
-    }
-
-    /// Scale
-    fn scale<CS: ConstraintSystem<E>>(self, scalar: E::Fr) -> Result<Elt<E>, SynthesisError> {
-        match self {
-            Elt::Num(num) => Ok(Elt::Num(num.scale(scalar))),
-            Elt::Allocated(a) => Elt::Num(a.into()).scale::<CS>(scalar),
-        }
-    }
-}
-
 /// Circuit for Poseidon hash.
-pub struct PoseidonCircuit<'a, E, A>
+pub struct PoseidonCircuit<'a, F, A>
 where
-    E: Engine,
-    A: Arity<E::Fr>,
+    F: PrimeField,
+    A: Arity<F>,
 {
     constants_offset: usize,
     width: usize,
-    elements: Vec<Elt<E>>,
+    elements: Vec<FpGadget<F>>,
     pos: usize,
     current_round: usize,
-    constants: &'a PoseidonConstants<E, A>,
+    constants: &'a PoseidonConstants<F, A>,
     _w: PhantomData<A>,
 }
 
 /// PoseidonCircuit implementation.
-impl<'a, E, A> PoseidonCircuit<'a, E, A>
+impl<'a, F, A> PoseidonCircuit<'a, F, A>
 where
-    E: Engine,
-    A: Arity<E::Fr>,
+    F: PrimeField,
+    A: Arity<F>,
 {
     /// Create a new Poseidon hasher for `preimage`.
-    fn new(elements: Vec<Elt<E>>, constants: &'a PoseidonConstants<E, A>) -> Self {
+    fn new(elements: Vec<FpGadget<F>>, constants: &'a PoseidonConstants<F, A>) -> Self {
         let width = constants.width();
 
         PoseidonCircuit {
@@ -136,37 +50,37 @@ where
         }
     }
 
-    fn hash<CS: ConstraintSystem<E>>(
+    fn hash<CS: ConstraintSystem<F>>(
         &mut self,
         mut cs: CS,
-    ) -> Result<AllocatedNum<E>, SynthesisError> {
-        self.full_round(cs.namespace(|| "first round"), true, false)?;
+    ) -> Result<FpGadget<F>, SynthesisError> {
+        self.full_round(cs.ns(|| "first round"), true, false)?;
 
         for i in 1..self.constants.full_rounds / 2 {
             self.full_round(
-                cs.namespace(|| format!("initial full round {}", i)),
+                cs.ns(|| format!("initial full round {}", i)),
                 false,
                 false,
             )?;
         }
 
         for i in 0..self.constants.partial_rounds {
-            self.partial_round(cs.namespace(|| format!("partial round {}", i)))?;
+            self.partial_round(cs.ns(|| format!("partial round {}", i)))?;
         }
 
         for i in 0..(self.constants.full_rounds / 2) - 1 {
             self.full_round(
-                cs.namespace(|| format!("final full round {}", i)),
+                cs.ns(|| format!("final full round {}", i)),
                 false,
                 false,
             )?;
         }
-        self.full_round(cs.namespace(|| "terminal full round"), false, true)?;
+        self.full_round(cs.ns(|| "terminal full round"), false, true)?;
 
-        self.elements[1].ensure_allocated(&mut cs.namespace(|| "hash result"), true)
+        self.elements[1].ensure_allocated(&mut cs.ns(|| "hash result"), true)
     }
 
-    fn full_round<CS: ConstraintSystem<E>>(
+    fn full_round<CS: ConstraintSystem<F>>(
         &mut self,
         mut cs: CS,
         first_round: bool,
@@ -211,14 +125,14 @@ where
             if first_round {
                 if i == 0 {
                     // The very first s-box for the constant arity tag can also be computed statically, as a constant.
-                    self.elements[i] = constant_quintic_s_box_pre_add_tag::<CS, E>(
+                    self.elements[i] = constant_quintic_s_box_pre_add_tag::<CS, F>(
                         &self.elements[i],
                         pre_round_key,
                         post_round_key,
                     );
                 } else {
                     self.elements[i] = quintic_s_box_pre_add(
-                        cs.namespace(|| format!("quintic s-box {}", i)),
+                        cs.ns(|| format!("quintic s-box {}", i)),
                         &self.elements[i],
                         pre_round_key,
                         post_round_key,
@@ -226,7 +140,7 @@ where
                 }
             } else {
                 self.elements[i] = quintic_s_box(
-                    cs.namespace(|| format!("quintic s-box {}", i)),
+                    cs.ns(|| format!("quintic s-box {}", i)),
                     &self.elements[i],
                     post_round_key,
                 )?;
@@ -239,12 +153,12 @@ where
         Ok(())
     }
 
-    fn partial_round<CS: ConstraintSystem<E>>(&mut self, mut cs: CS) -> Result<(), SynthesisError> {
+    fn partial_round<CS: ConstraintSystem<F>>(&mut self, mut cs: CS) -> Result<(), SynthesisError> {
         let round_key = self.constants.compressed_round_constants[self.constants_offset];
         self.constants_offset += 1;
         // Apply the quintic S-Box to the first element.
         self.elements[0] = quintic_s_box(
-            cs.namespace(|| "solitary quintic s-box"),
+            cs.ns(|| "solitary quintic s-box"),
             &self.elements[0],
             Some(round_key),
         )?;
@@ -254,13 +168,13 @@ where
         Ok(())
     }
 
-    fn product_mds_m<CS: ConstraintSystem<E>>(&mut self) -> Result<(), SynthesisError> {
+    fn product_mds_m<CS: ConstraintSystem<F>>(&mut self) -> Result<(), SynthesisError> {
         self.product_mds_with_matrix::<CS>(&self.constants.mds_matrices.m)
     }
 
     /// Set the provided elements with the result of the product between the elements and the appropriate
     /// MDS matrix.
-    fn product_mds<CS: ConstraintSystem<E>>(&mut self) -> Result<(), SynthesisError> {
+    fn product_mds<CS: ConstraintSystem<F>>(&mut self) -> Result<(), SynthesisError> {
         let full_half = self.constants.half_full_rounds;
         let sparse_offset = full_half - 1;
         if self.current_round == sparse_offset {
@@ -282,18 +196,18 @@ where
         Ok(())
     }
 
-    fn product_mds_with_matrix<CS: ConstraintSystem<E>>(
+    fn product_mds_with_matrix<CS: ConstraintSystem<F>>(
         &mut self,
-        matrix: &Matrix<E::Fr>,
+        matrix: &Matrix<F>,
     ) -> Result<(), SynthesisError> {
-        let mut result: Vec<Elt<E>> = Vec::with_capacity(self.constants.width());
+        let mut result: Vec<FpGadget<F>> = Vec::with_capacity(self.constants.width());
 
         for j in 0..self.constants.width() {
             let column = (0..self.constants.width())
                 .map(|i| matrix[i][j])
                 .collect::<Vec<_>>();
 
-            let product = scalar_product::<E, CS>(self.elements.as_slice(), &column)?;
+            let product = scalar_product::<F, CS>(self.elements.as_slice(), &column)?;
 
             result.push(product);
         }
@@ -304,13 +218,13 @@ where
     }
 
     // Sparse matrix in this context means one of the form, M''.
-    fn product_mds_with_sparse_matrix<CS: ConstraintSystem<E>>(
+    fn product_mds_with_sparse_matrix<CS: ConstraintSystem<F>>(
         &mut self,
-        matrix: &SparseMatrix<E>,
+        matrix: &SparseMatrix<F>,
     ) -> Result<(), SynthesisError> {
-        let mut result: Vec<Elt<E>> = Vec::with_capacity(self.constants.width());
+        let mut result: Vec<FpGadget<F>> = Vec::with_capacity(self.constants.width());
 
-        result.push(scalar_product::<E, CS>(
+        result.push(scalar_product::<F, CS>(
             self.elements.as_slice(),
             &matrix.w_hat,
         )?);
@@ -337,20 +251,20 @@ where
 }
 
 /// Create circuit for Poseidon hash.
-pub fn poseidon_hash<CS, E, A>(
+pub fn poseidon_hash<CS, F, A>(
     cs: CS,
-    preimage: Vec<AllocatedNum<E>>,
-    constants: &PoseidonConstants<E, A>,
-) -> Result<AllocatedNum<E>, SynthesisError>
+    preimage: Vec<FpGadget<F>>,
+    constants: &PoseidonConstants<F, A>,
+) -> Result<FpGadget<F>, SynthesisError>
 where
-    CS: ConstraintSystem<E>,
-    E: Engine,
-    A: Arity<E::Fr>,
+    CS: ConstraintSystem<F>,
+    F: PrimeField,
+    A: Arity<F>,
 {
-    let tag_element = Elt::num_from_fr::<CS>(constants.arity_tag);
+    let tag_element = FpGadget::<F>::from::<CS>(constants.arity_tag);
     let mut elements = Vec::with_capacity(A::to_usize());
     elements.push(tag_element);
-    elements.extend(preimage.into_iter().map(Elt::Allocated));
+    elements.extend(preimage.into_iter());
 
     let mut p = PoseidonCircuit::new(elements, constants);
 
@@ -358,18 +272,18 @@ where
 }
 
 /// Compute l^5 and enforce constraint. If round_key is supplied, add it to result.
-fn quintic_s_box<CS: ConstraintSystem<E>, E: Engine>(
+fn quintic_s_box<CS: ConstraintSystem<F>, F: PrimeField>(
     mut cs: CS,
-    e: &Elt<E>,
-    post_round_key: Option<E::Fr>,
-) -> Result<Elt<E>, SynthesisError> {
-    let l = e.ensure_allocated(&mut cs.namespace(|| "S-box input"), true)?;
+    e: &FpGadget<F>,
+    post_round_key: Option<F>,
+) -> Result<FpGadget<F>, SynthesisError> {
+    let l = e.ensure_allocated(&mut cs.ns(|| "S-box input"), true)?;
 
     // If round_key was supplied, add it after all exponentiation.
-    let l2 = l.square(cs.namespace(|| "l^2"))?;
-    let l4 = l2.square(cs.namespace(|| "l^4"))?;
+    let l2 = l.square(cs.ns(|| "l^2"))?;
+    let l4 = l2.square(cs.ns(|| "l^4"))?;
     let l5 = mul_sum(
-        cs.namespace(|| "(l4 * l) + rk)"),
+        cs.ns(|| "(l4 * l) + rk)"),
         &l4,
         &l,
         None,
@@ -377,24 +291,24 @@ fn quintic_s_box<CS: ConstraintSystem<E>, E: Engine>(
         true,
     );
 
-    Ok(Elt::Allocated(l5?))
+    Ok(l5?)
 }
 
 /// Compute l^5 and enforce constraint. If round_key is supplied, add it to l first.
-fn quintic_s_box_pre_add<CS: ConstraintSystem<E>, E: Engine>(
+fn quintic_s_box_pre_add<CS: ConstraintSystem<F>, F: PrimeField>(
     mut cs: CS,
-    e: &Elt<E>,
-    pre_round_key: Option<E::Fr>,
-    post_round_key: Option<E::Fr>,
-) -> Result<Elt<E>, SynthesisError> {
+    e: &FpGadget<F>,
+    pre_round_key: Option<F>,
+    post_round_key: Option<F>,
+) -> Result<FpGadget<F>, SynthesisError> {
     if let (Some(pre_round_key), Some(post_round_key)) = (pre_round_key, post_round_key) {
-        let l = e.ensure_allocated(&mut cs.namespace(|| "S-box input"), true)?;
+        let l = e.ensure_allocated(&mut cs.ns(|| "S-box input"), true)?;
 
         // If round_key was supplied, add it to l before squaring.
-        let l2 = square_sum(cs.namespace(|| "(l+rk)^2"), pre_round_key, &l, true)?;
-        let l4 = l2.square(cs.namespace(|| "l^4"))?;
+        let l2 = square_sum(cs.ns(|| "(l+rk)^2"), pre_round_key, &l, true)?;
+        let l4 = l2.square(cs.ns(|| "l^4"))?;
         let l5 = mul_sum(
-            cs.namespace(|| "l4 * (l + rk)"),
+            cs.ns(|| "l4 * (l + rk)"),
             &l4,
             &l,
             Some(pre_round_key),
@@ -402,38 +316,38 @@ fn quintic_s_box_pre_add<CS: ConstraintSystem<E>, E: Engine>(
             true,
         );
 
-        Ok(Elt::Allocated(l5?))
+        Ok(l5?)
     } else {
         panic!("pre_round_key and post_round_key must both be provided.");
     }
 }
 
 /// Compute l^5 and enforce constraint. If round_key is supplied, add it to l first.
-fn constant_quintic_s_box_pre_add_tag<CS: ConstraintSystem<E>, E: Engine>(
-    tag: &Elt<E>,
-    pre_round_key: Option<E::Fr>,
-    post_round_key: Option<E::Fr>,
-) -> Elt<E> {
+fn constant_quintic_s_box_pre_add_tag<CS: ConstraintSystem<F>, F: PrimeField>(
+    tag: &FpGadget<F>,
+    pre_round_key: Option<F>,
+    post_round_key: Option<F>,
+) -> FpGadget<F> {
     let mut tag = tag.val().expect("missing tag val");
     pre_round_key.expect("pre_round_key must be provided");
     post_round_key.expect("post_round_key must be provided");
 
-    crate::quintic_s_box::<E>(&mut tag, pre_round_key.as_ref(), post_round_key.as_ref());
+    crate::quintic_s_box::<F>(&mut tag, pre_round_key.as_ref(), post_round_key.as_ref());
 
-    Elt::num_from_fr::<CS>(tag)
+    FpGadget::<F>::from::<CS>(tag)
 }
 
 /// Calculates square of sum and enforces that constraint.
-pub fn square_sum<CS: ConstraintSystem<E>, E: Engine>(
+pub fn square_sum<CS: ConstraintSystem<F>, F: PrimeField>(
     mut cs: CS,
-    to_add: E::Fr,
-    num: &AllocatedNum<E>,
+    to_add: F,
+    num: &FpGadget<F>,
     enforce: bool,
-) -> Result<AllocatedNum<E>, SynthesisError>
+) -> Result<FpGadget<F>, SynthesisError>
 where
-    CS: ConstraintSystem<E>,
+    CS: ConstraintSystem<F>,
 {
-    let res = AllocatedNum::alloc(cs.namespace(|| "squared sum"), || {
+    let res = FpGadget::<F>::alloc(cs.ns(|| "squared sum"), || {
         let mut tmp = num
             .get_value()
             .ok_or_else(|| SynthesisError::AssignmentMissing)?;
@@ -455,18 +369,18 @@ where
 }
 
 /// Calculates (a * (pre_add + b)) + post_add — and enforces that constraint.
-pub fn mul_sum<CS: ConstraintSystem<E>, E: Engine>(
+pub fn mul_sum<CS: ConstraintSystem<F>, F: PrimeField>(
     mut cs: CS,
-    a: &AllocatedNum<E>,
-    b: &AllocatedNum<E>,
-    pre_add: Option<E::Fr>,
-    post_add: Option<E::Fr>,
+    a: &FpGadget<F>,
+    b: &FpGadget<F>,
+    pre_add: Option<F>,
+    post_add: Option<F>,
     enforce: bool,
-) -> Result<AllocatedNum<E>, SynthesisError>
+) -> Result<FpGadget<F>, SynthesisError>
 where
-    CS: ConstraintSystem<E>,
+    CS: ConstraintSystem<F>,
 {
-    let res = AllocatedNum::alloc(cs.namespace(|| "mul_sum"), || {
+    let res = FpGadget::<F>::alloc(cs.ns(|| "mul_sum"), || {
         let mut tmp = b
             .get_value()
             .ok_or_else(|| SynthesisError::AssignmentMissing)?;
@@ -486,7 +400,7 @@ where
 
     if enforce {
         if let Some(x) = post_add {
-            let mut neg = E::Fr::zero();
+            let mut neg = F::zero();
             neg.sub_assign(&x);
 
             if let Some(pre) = pre_add {
@@ -526,17 +440,17 @@ where
 }
 
 /// Calculates a * (b + to_add) — and enforces that constraint.
-pub fn mul_pre_sum<CS: ConstraintSystem<E>, E: Engine>(
+pub fn mul_pre_sum<CS: ConstraintSystem<F>, F: PrimeField>(
     mut cs: CS,
-    a: &AllocatedNum<E>,
-    b: &AllocatedNum<E>,
-    to_add: E::Fr,
+    a: &FpGadget<F>,
+    b: &FpGadget<F>,
+    to_add: F,
     enforce: bool,
-) -> Result<AllocatedNum<E>, SynthesisError>
+) -> Result<FpGadget<F>, SynthesisError>
 where
-    CS: ConstraintSystem<E>,
+    CS: ConstraintSystem<F>,
 {
-    let res = AllocatedNum::alloc(cs.namespace(|| "mul_sum"), || {
+    let res = FpGadget::<F>::alloc(cs.ns(|| "mul_sum"), || {
         let mut tmp = b
             .get_value()
             .ok_or_else(|| SynthesisError::AssignmentMissing)?;
@@ -560,25 +474,28 @@ where
     Ok(res)
 }
 
-fn scalar_product_with_add<E: Engine, CS: ConstraintSystem<E>>(
-    elts: &[Elt<E>],
-    scalars: &[E::Fr],
-    to_add: E::Fr,
-) -> Result<Elt<E>, SynthesisError> {
-    let tmp = scalar_product::<E, CS>(elts, scalars)?;
-    let tmp2 = tmp.add::<CS>(Elt::<E>::num_from_fr::<CS>(to_add))?;
+fn scalar_product_with_add<F: PrimeField, CS: ConstraintSystem<F>>(
+    elts: &[FpGadget<F>],
+    scalars: &[F],
+    to_add: F,
+) -> Result<FpGadget<F>, SynthesisError> {
+    let tmp = scalar_product::<F, CS>(elts, scalars)?;
+    let tmp2 = tmp.add::<CS>(FpGadget::<F>::num_from_fr::<CS>(to_add))?;
 
     Ok(tmp2)
 }
 
-fn scalar_product<E: Engine, CS: ConstraintSystem<E>>(
-    elts: &[Elt<E>],
-    scalars: &[E::Fr],
-) -> Result<Elt<E>, SynthesisError> {
+fn scalar_product<F: PrimeField, CS: ConstraintSystem<F>>(
+    elts: &[FpGadget<F>],
+    scalars: &[F],
+) -> Result<FpGadget<F>, SynthesisError> {
     elts.iter()
         .zip(scalars)
-        .try_fold(Elt::Num(num::Num::zero()), |acc, (elt, &scalar)| {
-            acc.add::<CS>(elt.clone().scale::<CS>(scalar)?)
+        .try_fold(FpGadget::<F>::zero()?, |acc, (elt, &scalar)| {
+            acc.add::<CS>(elt.clone().mul_by_constant::<CS>(
+                cs.ns(|| "mul by scalar"),
+                &scalar,
+            )?)
         })
 }
 
@@ -641,7 +558,7 @@ mod tests {
                 let fr = Fr::random(&mut rng);
                 fr_data[i] = fr;
                 i += 1;
-                AllocatedNum::alloc(cs.namespace(|| format!("data {}", i)), || Ok(fr)).unwrap()
+                FpGadget::<F>::alloc(cs.ns(|| format!("data {}", i)), || Ok(fr)).unwrap()
             })
             .collect::<Vec<_>>();
 
@@ -683,10 +600,10 @@ mod tests {
     fn test_square_sum() {
         let mut cs = TestConstraintSystem::<Bls12>::new();
 
-        let mut cs1 = cs.namespace(|| "square_sum");
+        let mut cs1 = cs.ns(|| "square_sum");
         let two = fr(2);
         let three =
-            AllocatedNum::alloc(cs1.namespace(|| "three"), || Ok(scalar_from_u64(3))).unwrap();
+            FpGadget::<F>::alloc(cs1.ns(|| "three"), || Ok(scalar_from_u64(3))).unwrap();
         let res = square_sum(cs1, two, &three, true).unwrap();
 
         let twenty_five: Fr = scalar_from_u64(25);
@@ -717,10 +634,10 @@ mod tests {
             let two = efr(2);
 
             let n3 =
-                AllocatedNum::alloc(cs.namespace(|| "three"), || Ok(scalar_from_u64(3))).unwrap();
+                FpGadget::<F>::alloc(cs.ns(|| "three"), || Ok(scalar_from_u64(3))).unwrap();
             let three = Elt::Allocated(n3.clone());
             let n4 =
-                AllocatedNum::alloc(cs.namespace(|| "four"), || Ok(scalar_from_u64(4))).unwrap();
+                FpGadget::<F>::alloc(cs.ns(|| "four"), || Ok(scalar_from_u64(4))).unwrap();
             let four = Elt::Allocated(n4.clone());
 
             let res = scalar_product::<Bls12, TestConstraintSystem<Bls12>>(
@@ -751,10 +668,10 @@ mod tests {
             let two = efr(2);
 
             let n3 =
-                AllocatedNum::alloc(cs.namespace(|| "three"), || Ok(scalar_from_u64(3))).unwrap();
+                FpGadget::<F>::alloc(cs.ns(|| "three"), || Ok(scalar_from_u64(3))).unwrap();
             let three = Elt::Allocated(n3.clone());
             let n4 =
-                AllocatedNum::alloc(cs.namespace(|| "four"), || Ok(scalar_from_u64(4))).unwrap();
+                FpGadget::<F>::alloc(cs.ns(|| "four"), || Ok(scalar_from_u64(4))).unwrap();
             let four = Elt::Allocated(n4.clone());
 
             let mut res_vec = Vec::new();

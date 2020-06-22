@@ -6,10 +6,9 @@ extern crate lazy_static;
 pub use crate::poseidon::{Arity, Poseidon};
 use crate::round_constants::generate_constants;
 pub use error::Error;
-use ff::{Field, PrimeField, ScalarEngine};
 use generic_array::GenericArray;
-pub use paired::bls12_381::Fr as Scalar;
-use paired::bls12_381::FrRepr;
+use snarkos_models::curves::{Field, PrimeField};
+pub use snarkos_curves::bls12_377::Fr as Scalar;
 
 /// Poseidon circuit
 pub mod circuit;
@@ -22,7 +21,6 @@ pub mod poseidon;
 mod poseidon_alt;
 mod preprocessing;
 mod round_constants;
-mod test;
 
 /// Tree Builder
 #[cfg(feature = "gpu")]
@@ -126,19 +124,21 @@ pub fn round_numbers(arity: usize, strength: &Strength) -> (usize, usize) {
 }
 
 /// convert
-pub fn scalar_from_u64<Fr: PrimeField>(i: u64) -> Fr {
-    Fr::from_repr(<Fr::Repr as From<u64>>::from(i)).unwrap()
+pub fn scalar_from_u64<F: PrimeField>(i: u64) -> F {
+    F::from_repr(<F::BigInt as From<u64>>::from(i)).unwrap()
 }
 
+/*
 /// create field element from four u64
 pub fn scalar_from_u64s(parts: [u64; 4]) -> Scalar {
     Scalar::from_repr(FrRepr(parts)).unwrap()
 }
+*/
 
 const SBOX: u8 = 1; // x^5
 const FIELD: u8 = 1; // Gf(p)
 
-fn round_constants<E: ScalarEngine>(arity: usize, strength: &Strength) -> Vec<E::Fr> {
+fn round_constants<F: PrimeField>(arity: usize, strength: &Strength) -> Vec<F> {
     let t = arity + 1;
 
     let (full_rounds, partial_rounds) = round_numbers(arity, strength);
@@ -146,21 +146,21 @@ fn round_constants<E: ScalarEngine>(arity: usize, strength: &Strength) -> Vec<E:
     let r_f = full_rounds as u16;
     let r_p = partial_rounds as u16;
 
-    let fr_num_bits = E::Fr::NUM_BITS;
+    let fr_num_bits = F::NUM_BITS;
     let field_size = {
         assert!(fr_num_bits <= std::u16::MAX as u32);
         // It's safe to convert to u16 for compatibility with other types.
         fr_num_bits as u16
     };
 
-    generate_constants::<E>(FIELD, SBOX, field_size, t as u16, r_f, r_p)
+    generate_constants::<F>(FIELD, SBOX, field_size, t as u16, r_f, r_p)
 }
 
 /// Apply the quintic S-Box (s^5) to a given item
-pub(crate) fn quintic_s_box<E: ScalarEngine>(
-    l: &mut E::Fr,
-    pre_add: Option<&E::Fr>,
-    post_add: Option<&E::Fr>,
+pub(crate) fn quintic_s_box<F: PrimeField>(
+    l: &mut F,
+    pre_add: Option<&F>,
+    post_add: Option<&F>,
 ) {
     if let Some(x) = pre_add {
         l.add_assign(x);

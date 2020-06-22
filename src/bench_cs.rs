@@ -1,19 +1,23 @@
 use std::marker::PhantomData;
 
-use bellperson::{ConstraintSystem, Index, LinearCombination, SynthesisError, Variable};
-use paired::Engine;
+use snarkos_models::{
+    curves::{PairingEngine, PrimeField},
+    gadgets::r1cs::{ConstraintSystem, Index, LinearCombination, Variable}
+};
+use snarkos_errors::gadgets::SynthesisError;
 
 #[derive(Debug)]
-pub struct BenchCS<E: Engine> {
+pub struct BenchCS<F: PrimeField> {
     inputs: usize,
     aux: usize,
     a: usize,
     b: usize,
     c: usize,
-    _e: PhantomData<E>,
+    num_constraints: usize,
+    _e: PhantomData<F>,
 }
 
-impl<E: Engine> BenchCS<E> {
+impl<F: PrimeField> BenchCS<F> {
     pub fn new() -> Self {
         BenchCS::default()
     }
@@ -27,7 +31,7 @@ impl<E: Engine> BenchCS<E> {
     }
 }
 
-impl<E: Engine> Default for BenchCS<E> {
+impl<F: PrimeField> Default for BenchCS<F> {
     fn default() -> Self {
         BenchCS {
             inputs: 1,
@@ -35,17 +39,18 @@ impl<E: Engine> Default for BenchCS<E> {
             a: 0,
             b: 0,
             c: 0,
+            num_constraints: 0,
             _e: PhantomData,
         }
     }
 }
 
-impl<E: Engine> ConstraintSystem<E> for BenchCS<E> {
+impl<F: PrimeField> ConstraintSystem<F> for BenchCS<F> {
     type Root = Self;
 
-    fn alloc<F, A, AR>(&mut self, _: A, _f: F) -> Result<Variable, SynthesisError>
+    fn alloc<FN, A, AR>(&mut self, _: A, _f: FN) -> Result<Variable, SynthesisError>
     where
-        F: FnOnce() -> Result<E::Fr, SynthesisError>,
+        FN: FnOnce() -> Result<F, SynthesisError>,
         A: FnOnce() -> AR,
         AR: Into<String>,
     {
@@ -55,9 +60,9 @@ impl<E: Engine> ConstraintSystem<E> for BenchCS<E> {
         Ok(Variable::new_unchecked(Index::Aux(self.aux - 1)))
     }
 
-    fn alloc_input<F, A, AR>(&mut self, _: A, _f: F) -> Result<Variable, SynthesisError>
+    fn alloc_input<FN, A, AR>(&mut self, _: A, _f: FN) -> Result<Variable, SynthesisError>
     where
-        F: FnOnce() -> Result<E::Fr, SynthesisError>,
+        FN: FnOnce() -> Result<F, SynthesisError>,
         A: FnOnce() -> AR,
         AR: Into<String>,
     {
@@ -71,13 +76,14 @@ impl<E: Engine> ConstraintSystem<E> for BenchCS<E> {
     where
         A: FnOnce() -> AR,
         AR: Into<String>,
-        LA: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
-        LB: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
-        LC: FnOnce(LinearCombination<E>) -> LinearCombination<E>,
+        LA: FnOnce(LinearCombination<F>) -> LinearCombination<F>,
+        LB: FnOnce(LinearCombination<F>) -> LinearCombination<F>,
+        LC: FnOnce(LinearCombination<F>) -> LinearCombination<F>,
     {
         self.a += 1;
         self.b += 1;
         self.c += 1;
+        self.num_constraints += 1;
     }
 
     fn push_namespace<NR, N>(&mut self, _: N)
@@ -91,5 +97,9 @@ impl<E: Engine> ConstraintSystem<E> for BenchCS<E> {
 
     fn get_root(&mut self) -> &mut Self::Root {
         self
+    }
+
+    fn num_constraints(&self) -> usize {
+        self.num_constraints
     }
 }

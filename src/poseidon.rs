@@ -4,10 +4,9 @@ use crate::poseidon_alt::{hash_correct, hash_optimized_dynamic};
 use crate::preprocessing::compress_round_constants;
 use crate::{matrix, quintic_s_box, BatchHasher, Strength, DEFAULT_STRENGTH};
 use crate::{round_constants, round_numbers, scalar_from_u64, Error};
-use ff::{Field, PrimeField, ScalarEngine};
 use generic_array::{sequence::GenericSequence, typenum, ArrayLength, GenericArray};
-use paired::bls12_381;
-use paired::bls12_381::Bls12;
+use snarkos_models::curves::{Field, PrimeField};
+use snarkos_curves::bls12_377::{self, Bls12_377};
 use std::marker::PhantomData;
 use typenum::marker_traits::Unsigned;
 use typenum::*;
@@ -89,32 +88,32 @@ impl_arity!(
 
 /// The `Poseidon` structure will accept a number of inputs equal to the arity.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Poseidon<'a, E, A = U2>
+pub struct Poseidon<'a, F, A = U2>
 where
-    E: ScalarEngine,
-    A: Arity<E::Fr>,
+    F: PrimeField,
+    A: Arity<F>,
 {
     pub(crate) constants_offset: usize,
     pub(crate) current_round: usize, // Used in static optimization only for now.
     /// the elements to permute
-    pub elements: GenericArray<E::Fr, A::ConstantsSize>,
+    pub elements: GenericArray<F, A::ConstantsSize>,
     pos: usize,
-    pub(crate) constants: &'a PoseidonConstants<E, A>,
-    _e: PhantomData<E>,
+    pub(crate) constants: &'a PoseidonConstants<F, A>,
+    _e: PhantomData<F>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct PoseidonConstants<E, A>
+pub struct PoseidonConstants<F, A>
 where
-    E: ScalarEngine,
-    A: Arity<E::Fr>,
+    F: PrimeField,
+    A: Arity<F>,
 {
-    pub mds_matrices: MDSMatrices<E>,
-    pub round_constants: Vec<E::Fr>,
-    pub compressed_round_constants: Vec<E::Fr>,
-    pub pre_sparse_matrix: Matrix<E::Fr>,
-    pub sparse_matrixes: Vec<SparseMatrix<E>>,
-    pub arity_tag: E::Fr,
+    pub mds_matrices: MDSMatrices<F>,
+    pub round_constants: Vec<F>,
+    pub compressed_round_constants: Vec<F>,
+    pub pre_sparse_matrix: Matrix<F>,
+    pub sparse_matrixes: Vec<SparseMatrix<F>>,
+    pub arity_tag: F,
     pub full_rounds: usize,
     pub half_full_rounds: usize,
     pub partial_rounds: usize,
@@ -136,10 +135,10 @@ use HashMode::{Correct, OptimizedDynamic, OptimizedStatic};
 
 pub const DEFAULT_HASH_MODE: HashMode = OptimizedStatic;
 
-impl<'a, E, A> PoseidonConstants<E, A>
+impl<'a, F, A> PoseidonConstants<F, A>
 where
-    E: ScalarEngine,
-    A: Arity<E::Fr>,
+    F: PrimeField,
+    A: Arity<F>,
 {
     pub fn new() -> Self {
         Self::new_with_strength(DEFAULT_STRENGTH)
@@ -149,12 +148,12 @@ where
         let arity = A::to_usize();
         let width = arity + 1;
 
-        let mds_matrices = create_mds_matrices::<E>(width);
+        let mds_matrices = create_mds_matrices::<F>(width);
 
         let (full_rounds, partial_rounds) = round_numbers(arity, &strength);
         let half_full_rounds = full_rounds / 2;
-        let round_constants = round_constants::<E>(arity, &strength);
-        let compressed_round_constants = compress_round_constants::<E>(
+        let round_constants = round_constants::<F>(arity, &strength);
+        let compressed_round_constants = compress_round_constants::<F>(
             width,
             full_rounds,
             partial_rounds,
@@ -164,7 +163,7 @@ where
         );
 
         let (pre_sparse_matrix, sparse_matrixes) =
-            factor_to_sparse_matrixes::<E>(mds_matrices.m.clone(), partial_rounds);
+            factor_to_sparse_matrixes::<F>(mds_matrices.m.clone(), partial_rounds);
 
         // Ensure we have enough constants for the sbox rounds
         assert!(
@@ -204,17 +203,17 @@ where
     }
 }
 
-impl<'a, E, A> Poseidon<'a, E, A>
+impl<'a, F, A> Poseidon<'a, F, A>
 where
-    E: ScalarEngine,
-    A: Arity<E::Fr>,
+    F: PrimeField,
+    A: Arity<F>,
 {
-    pub fn new(constants: &'a PoseidonConstants<E, A>) -> Self {
+    pub fn new(constants: &'a PoseidonConstants<F, A>) -> Self {
         let elements = GenericArray::generate(|i| {
             if i == 0 {
                 constants.arity_tag
             } else {
-                E::Fr::zero()
+                F::zero()
             }
         });
         Poseidon {
@@ -223,10 +222,10 @@ where
             elements,
             pos: 1,
             constants,
-            _e: PhantomData::<E>,
+            _e: PhantomData::<F>,
         }
     }
-    pub fn new_with_preimage(preimage: &[E::Fr], constants: &'a PoseidonConstants<E, A>) -> Self {
+    pub fn new_with_preimage(preimage: &[F], constants: &'a PoseidonConstants<F, A>) -> Self {
         assert_eq!(preimage.len(), A::to_usize(), "Invalid preimage size");
 
         let elements = GenericArray::generate(|i| {
@@ -245,7 +244,7 @@ where
             elements,
             pos: width,
             constants,
-            _e: PhantomData::<E>,
+            _e: PhantomData::<F>,
         }
     }
 
@@ -254,7 +253,7 @@ where
     /// # Panics
     ///
     /// Panics if the provided slice is bigger than the arity.
-    pub fn set_preimage(&mut self, preimage: &[E::Fr]) {
+    pub fn set_preimage(&mut self, preimage: &[F]) {
         self.reset();
         self.elements[1..].copy_from_slice(&preimage);
         self.pos = self.elements.len();
@@ -266,13 +265,13 @@ where
         self.current_round = 0;
         self.elements[1..]
             .iter_mut()
-            .for_each(|l| *l = scalar_from_u64::<E::Fr>(0u64));
+            .for_each(|l| *l = scalar_from_u64::<F>(0u64));
         self.elements[0] = self.constants.arity_tag;
         self.pos = 1;
     }
 
     /// The returned `usize` represents the element position (within arity) for the input operation
-    pub fn input(&mut self, element: E::Fr) -> Result<usize, Error> {
+    pub fn input(&mut self, element: F) -> Result<usize, Error> {
         // Cannot input more elements than the defined arity
         if self.pos >= self.constants.width() {
             return Err(Error::FullBuffer);
@@ -285,7 +284,7 @@ where
         Ok(self.pos - 1)
     }
 
-    pub fn hash_in_mode(&mut self, mode: HashMode) -> E::Fr {
+    pub fn hash_in_mode(&mut self, mode: HashMode) -> F {
         match mode {
             Correct => hash_correct(self),
             OptimizedDynamic => hash_optimized_dynamic(self),
@@ -293,11 +292,11 @@ where
         }
     }
 
-    pub fn hash(&mut self) -> E::Fr {
+    pub fn hash(&mut self) -> F {
         self.hash_in_mode(DEFAULT_HASH_MODE)
     }
 
-    pub fn hash_optimized_static(&mut self) -> E::Fr {
+    pub fn hash_optimized_static(&mut self) -> F {
         // The first full round should use the initial constants.
         self.add_round_constants();
 
@@ -354,13 +353,13 @@ where
                 } else {
                     Some(post)
                 };
-                quintic_s_box::<E>(l, None, post_key);
+                quintic_s_box::<F>(l, None, post_key);
             });
         // We need this because post_round_keys will have been empty, so it didn't happen in the for_each. :(
         if last_round {
             self.elements
                 .iter_mut()
-                .for_each(|l| quintic_s_box::<E>(l, None, None));
+                .for_each(|l| quintic_s_box::<F>(l, None, None));
         } else {
             self.constants_offset += self.elements.len();
         }
@@ -372,7 +371,7 @@ where
         let post_round_key = self.constants.compressed_round_constants[self.constants_offset];
 
         // Apply the quintic S-Box to the first element
-        quintic_s_box::<E>(&mut self.elements[0], None, Some(&post_round_key));
+        quintic_s_box::<F>(&mut self.elements[0], None, Some(&post_round_key));
         self.constants_offset += 1;
 
         self.round_product_mds();
@@ -420,8 +419,8 @@ where
         self.product_mds_with_matrix(&self.constants.mds_matrices.m);
     }
 
-    pub(crate) fn product_mds_with_matrix(&mut self, matrix: &Matrix<E::Fr>) {
-        let mut result = GenericArray::<E::Fr, A::ConstantsSize>::generate(|_| E::Fr::zero());
+    pub(crate) fn product_mds_with_matrix(&mut self, matrix: &Matrix<F>) {
+        let mut result = GenericArray::<F, A::ConstantsSize>::generate(|_| F::zero());
 
         for (j, val) in result.iter_mut().enumerate() {
             for (i, row) in matrix.iter().enumerate() {
@@ -435,8 +434,8 @@ where
     }
 
     // Sparse matrix in this context means one of the form, M''.
-    fn product_mds_with_sparse_matrix(&mut self, sparse_matrix: &SparseMatrix<E>) {
-        let mut result = GenericArray::<E::Fr, A::ConstantsSize>::generate(|_| E::Fr::zero());
+    fn product_mds_with_sparse_matrix(&mut self, sparse_matrix: &SparseMatrix<F>) {
+        let mut result = GenericArray::<F, A::ConstantsSize>::generate(|_| F::zero());
 
         // First column is dense.
         for (i, val) in sparse_matrix.w_hat.iter().enumerate() {
@@ -466,16 +465,16 @@ where
 #[derive(Debug)]
 pub struct SimplePoseidonBatchHasher<'a, A>
 where
-    A: Arity<bls12_381::Fr>,
+    A: Arity<bls12_377::Fr>,
 {
-    constants: PoseidonConstants<Bls12, A>,
+    constants: PoseidonConstants<bls12_377::Fr, A>,
     max_batch_size: usize,
-    _s: PhantomData<Poseidon<'a, Bls12, A>>,
+    _s: PhantomData<Poseidon<'a, bls12_377::Fr, A>>,
 }
 
 impl<'a, A> SimplePoseidonBatchHasher<'a, A>
 where
-    A: 'a + Arity<bls12_381::Fr>,
+    A: 'a + Arity<bls12_377::Fr>,
 {
     pub(crate) fn new(max_batch_size: usize) -> Result<Self, Error> {
         Self::new_with_strength(DEFAULT_STRENGTH, max_batch_size)
@@ -494,12 +493,12 @@ where
 }
 impl<'a, A> BatchHasher<A> for SimplePoseidonBatchHasher<'a, A>
 where
-    A: 'a + Arity<bls12_381::Fr>,
+    A: 'a + Arity<bls12_377::Fr>,
 {
     fn hash(
         &mut self,
-        preimages: &[GenericArray<bls12_381::Fr, A>],
-    ) -> Result<Vec<bls12_381::Fr>, Error> {
+        preimages: &[GenericArray<bls12_377::Fr, A>],
+    ) -> Result<Vec<bls12_377::Fr>, Error> {
         Ok(preimages
             .iter()
             .map(|preimage| Poseidon::new_with_preimage(&preimage, &self.constants).hash())
@@ -517,7 +516,7 @@ mod tests {
     use crate::*;
     use ff::Field;
     use generic_array::typenum;
-    use paired::bls12_381::{Bls12, Fr};
+    use paired::bls12_377::{Bls12, Fr};
 
     #[test]
     fn reset() {
